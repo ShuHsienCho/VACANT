@@ -60,12 +60,12 @@ vacant <- function(geno,
   }
 
   # ---- 4. Analysis ----
-  stats_out <- analyze_set(pre, clus, test = test, acat.weight = acat.weight)
+  stats.out <- analyze_set(pre, clus, test = test, acat.weight = acat.weight)
 
   # [New Return Structure]
   # We return a List containing both Statistics and the Prediction Model
   return(list(
-    results = stats_out,            # The numeric vector (P-values, Betas)
+    results = stats.out,            # The numeric vector (P-values, Betas)
     model   = clus$prediction.model,# The Pareto anchors for future use
     info    = list(                 # Metadata
       test = test,
