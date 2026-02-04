@@ -35,7 +35,7 @@ cov_file   <- system.file("extdata", "cov.txt", package = "VACANT")
 geno_df  <- data.table::fread(geno_file, header = TRUE, colClasses = "character", data.table = FALSE)
 score_df <- data.table::fread(score_file, header = TRUE, data.table = FALSE)
 pheno_df <- data.table::fread(pheno_file, header = TRUE, data.table = FALSE)
-cov_df   <- data.table::fread(cov_file, header = TRUE, data.table = FALSE)
+cov_df   <- data.table::fread(cov_file, header = FALSE, data.table = FALSE)
 
 # 3. Run Analysis
 result <- vacant(
