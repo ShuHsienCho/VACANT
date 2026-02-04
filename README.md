@@ -1,206 +1,220 @@
 # VACANT: Variant Annotation Clustering AssociatioN Test
 
-
 **VACANT** is a robust R framework for rare variant association testing. It leverages **multi-dimensional annotation scores** to cluster variants into risk tiers using a conservative **Pareto Staircase** approach, followed by an aggregated association test (ACAT) or a joint multivariate Firth regression.
-
-It is designed to handle highly skewed genomic scores (e.g., CADD, SpliceAI) via automatic log-transformation and provides a portable prediction model for clinical risk stratification.
 
 ---
 
-##  Installation & Setup
+## ⚠️ Important: Data Requirements
+
+Before preparing your input files, please adhere to these critical rules:
+
+1.  **Rare Variants Only**: You must filter your variants (e.g., MAF < 0.01) **BEFORE** creating the input files.
+2.  **Row Alignment**: All input files (`geno`, `score`, `pheno`, `cov`) must be **row-aligned**. The $i$-th row in every file must correspond to the same sample/variant.
+3.  **Genotype Format**: Genotypes must be stored as **strings** (e.g., "010010..."), never as numbers.
+
+---
+
+## ⚡️ Quick Start with Example Data
+
+VACANT comes with built-in example datasets in `inst/extdata`.
+
+### Run in R
+
+```r
+library(VACANT)
+library(data.table)
+
+# 1. Locate example files
+geno_file  <- system.file("extdata", "geno.txt", package = "VACANT")
+score_file <- system.file("extdata", "score.txt", package = "VACANT")
+pheno_file <- system.file("extdata", "pheno.txt", package = "VACANT")
+cov_file   <- system.file("extdata", "cov.txt", package = "VACANT")
+
+# 2. Load Data
+# [CRITICAL] Read genotype as "character" to preserve string format
+geno_df  <- fread(geno_file, header = TRUE, colClasses = "character", data.table = FALSE)
+score_df <- fread(score_file, header = TRUE, data.table = FALSE)
+pheno_df <- fread(pheno_file, header = TRUE, data.table = FALSE)
+cov_df   <- fread(cov_file, header = TRUE, data.table = FALSE)
+
+# 3. Run Analysis
+result <- vacant(
+  geno.maf     = geno_df[[1]],      # Extract the genotype column
+  score.vector = as.matrix(score_df), 
+  phenotype    = data.frame(phenotype = pheno_df[[1]]), 
+  covariates   = cov_df,
+  test         = "multi"
+)
+
+print(result$results)
+
+```
+
+---
+
+## 📄 Input File Formats
+
+VACANT accepts standard text files (CSV/TXT).
+
+### 1. Genotype File (`--geno`)
+
+* **Format**: A file with a header and a column of genotype strings.
+* **Crucial**: Must be read as `character` in R.
+
+**Example (`geno.txt`):**
+
+```text
+genotype
+01000000100000...
+00000000000000...
+
+```
+
+### 2. Score File (`--score`)
+
+* **Format**: A matrix of numeric scores with header names.
+
+**Example (`score.txt`):**
+
+```text
+CADD,REVEL
+25.4,0.8
+10.2,0.1
+
+```
+
+### 3. Phenotype File (`--pheno`)
+
+* **Format**: A file containing phenotype (0/1).
+
+### 4. Covariate File (`--cov`)
+
+* **Format**: A file containing covariates (e.g. PC1, Age).
+
+---
+
+## 🛠 Installation & Setup
 
 VACANT can be used as a **Command Line Tool** (like SAIGE/PLINK) or as a standard **R Library**.
 
 ### 1. Install the R Package
 
-First, install the package dependencies and VACANT itself in R.
-
 ```r
 # In R console
 install.packages(c("devtools", "optparse", "data.table", "stringi", "logistf", "mclust", "dplyr"))
-
-# Install VACANT from source (assuming you are in the VACANT directory)
 devtools::install_local(".") 
-# Or from GitHub: 
-# devtools::install_github("YourUsername/VACANT")
 
 ```
 
 ### 2. Set up the Command Line Tool (CLI)
 
-To run `vacant` directly from your terminal, copy the wrapper script to your system path.
-
 ```bash
-# 1. Navigate to the binary folder in the repo
 cd inst/bin/
-
-# 2. Make executable
 chmod +x vacant
-
-# 3. Copy to system bin (Requires sudo)
 sudo cp vacant /usr/local/bin/
-
-# --- Alternative (No sudo) ---
-# mkdir -p ~/bin && cp vacant ~/bin/
-# export PATH=$PATH:~/bin
 
 ```
 
 ---
 
-##  CLI Usage: Mode 1 - Analysis (Training)
+## 🚀 CLI Usage (Terminal)
 
-The default mode. Performs clustering, runs statistical tests, and saves the trained model.
-
-### Command Example
+### Mode 1: Analysis (Training)
 
 ```bash
 vacant \
-  --geno data/genotypes.txt \
-  --score data/scores.csv \
-  --pheno data/phenotypes.ped \
-  --cov data/covariates.txt \
+  --geno data/geno.txt \
+  --score data/score.txt \
+  --pheno data/pheno.txt \
+  --cov data/cov.txt \
   --score_cols "CADD,REVEL" \
   --test multi \
   --output results/TP53_result
 
 ```
 
-### Arguments
-
 | Argument | Description |
 | --- | --- |
-| `--geno` | **[Required]** Path to file containing Genotype Strings (e.g., "00100..."). |
-| `--score` | **[Required]** Path to file containing Annotation Scores. |
-| `--pheno` | **[Required]** Path to file containing Phenotypes. |
-| `--cov` | **[Optional]** Path to file containing Covariates (e.g., PCA). |
-| `--score_cols` | **[Required]** Comma-separated list of score columns to use (e.g., "CADD,REVEL"). |
-| `--output` | **[Required]** Output prefix. Generates `.csv` (stats) and `.rds` (model). |
-| `--test` | `multi` (Joint model, returns Betas) or `uni` (ACAT P-value only). |
-| `--weight` | `score` (Risk-weighted, default) or `equal`. |
-| `--size_threshold` | Minimum cluster size (default: 10). |
+| `--geno` | **[Required]** Path to genotype string file. |
+| `--score` | **[Required]** Path to annotation scores. |
+| `--pheno` | **[Required]** Path to phenotype file. |
+| `--cov` | **[Optional]** Path to covariate file. |
+| `--score_cols` | **[Required]** Score column names (must match header). |
+| `--output` | **[Required]** Output prefix. |
 
----
+### Mode 2: Clinical Prediction
 
-## 🔮 CLI Usage: Mode 2 - Prediction
-
-Use a previously trained model (`.rds`) to predict risk tiers for **new variants**.
-
-### Command Example
+Use a previously trained model (`.rds`) to predict risk tiers for new variants.
 
 ```bash
 vacant \
-  --input new_variants.csv \
+  --input new_variants_scores.csv \
   --model results/TP53_result.rds \
-  --score_cols "CADD,REVEL" \
   --output results/predictions.csv
 
 ```
 
-### Arguments
-
-| Argument | Description |
-| --- | --- |
-| `--model` | **[Required]** Path to the `.rds` file generated by the Analysis mode. |
-| `--input` | **[Required]** Path to CSV containing **raw scores** for new variants. |
-| `--score_cols` | **[Required]** Score columns to use (Must match the training model). |
-| `--output` | Output filename for predictions. |
-
-> **Note**: The CLI automatically handles the Log-transformation and Shift using the parameters stored in the model. You do not need to pre-process the scores.
+*(Note: `--input` should contain the raw scores for new variants. The CLI handles log-transformation automatically.)*
 
 ---
 
-## 📄 Input File Formats
+## 💻 R Library Usage
 
-**All input files for Analysis Mode must be row-aligned (same number of samples, same order).**
+How to load your data in R.
 
-1. **Genotype File** (`--geno`): Single column of strings (Allele counts).
-```text
-genotype
-00100100...
-00000000...
+### 1. Analysis (Training)
+
+```r
+library(VACANT)
+library(data.table)
+
+# 1. Load Data
+# [CRITICAL] Always force colClasses = "character" for genotypes
+geno_df <- fread("data/geno.txt", header = TRUE, colClasses = "character", data.table = FALSE)
+geno_vec <- geno_df[[1]] 
+
+# Load scores & pheno
+score_mat <- as.matrix(fread("data/score.txt", header = TRUE))
+pheno_df  <- fread("data/pheno.txt", header = TRUE, data.table = FALSE)
+cov_df    <- fread("data/cov.txt", header = TRUE, data.table = FALSE)
+
+# 2. Run Analysis
+result_obj <- vacant(
+  geno.maf     = geno_vec,
+  score.vector = score_mat,
+  phenotype    = pheno_df,
+  covariates   = cov_df,
+  test         = "multi", 
+  acat.weight  = "score"
+)
+
+# View Results
+print(result_obj$results)
 
 ```
 
+### 2. Clinical Prediction
 
-2. **Score File** (`--score`): Matrix of numeric scores.
-```text
-CADD,REVEL
-25.4,0.8
-10.1,0.2
-
-```
-
-
-3. **Phenotype File** (`--pheno`): Matrix/Vector with a `phenotype` or `aff` column (0/1).
-4. **Covariate File** (`--cov`): Matrix of numeric covariates.
-
----
-
-## 💻 Usage: R Library
-
-If you prefer working interactively in R Studio:
-
-### 1. Analysis (`vacant`)
+You can predict risk clusters for new variants using the model object.
 
 ```r
 library(VACANT)
 
-# 1. Load Data (User responsibility)
-# Ensure all vectors/matrices are row-aligned
-my_genos <- c("00100...", "00010...", "00000...") 
-my_scores <- matrix(c(20, 0.5, 10, 0.2, 0, 0), ncol=2)
-my_pheno <- data.frame(phenotype = c(1, 0, 0))
-my_cov   <- data.frame(PC1 = c(0.1, -0.2, 0.5))
-
-# 2. Run Analysis
-result_obj <- vacant(
-  geno.maf     = my_genos,
-  score.vector = my_scores,
-  phenotype    = my_pheno,
-  covariates   = my_cov,
-  test         = "multi",
-  acat.weight  = "score"
-)
-
-# 3. Explore Results
-print(result_obj$results) # View P-values and Betas
-
-```
-
-### 2. Clinical Prediction (`predict_vacant_cluster`)
-
-```r
-# Load trained model (from CLI output)
+# Step A: Load a trained model
 model_obj <- readRDS("results/TP53_result.rds")
 
-# New variants (Raw scores)
-new_variants <- data.frame(
-  CADD = c(30, 5), 
-  REVEL = c(0.9, 0.1)
-)
+# Step B: Prepare new data (Raw scores)
+# Ensure columns match the training data
+new_scores <- read.csv("data/new_variants.csv")
 
-# Predict (Returns integer cluster IDs: 1=Benign, K=High Risk)
-risk_groups <- predict_vacant_cluster(model_obj$model, new_variants)
+# Step C: Predict Risk Clusters
+# Returns integer IDs (1 = Lowest Risk, K = Highest Risk)
+pred_clusters <- predict_vacant_cluster(model_obj$model, new_scores)
+
+# View
+print(pred_clusters)
 
 ```
-
----
-
-## 🧠 Methodology
-
-1. **Log-Shift Transformation**: Handles highly right-skewed genomic scores by automatically detecting negative values, shifting them, and applying `log1p`.
-2. **Pareto Staircase Clustering**:
-* Scores are standardized (Z-score) and clustered using GMM-initialized K-means.
-* Clusters are sorted by **Algebraic Sum** (Cluster 1 = Lowest Risk).
-* **Conservative Boundary**: A variant is assigned to a high-risk cluster only if it dominates the cluster's **Pareto Anchors** in **ALL** dimensions.
-
-
-3. **Statistical Testing**:
-* **Firth Regression**: Uses penalized likelihood to handle rare variants and unbalanced case/control ratios.
-* **Fallback Mechanism**: If the full model fails (Singular Fisher Information), it automatically retries without covariates to salvage a valid P-value.
-
-
 
 ---
 
@@ -211,9 +225,11 @@ R/
 ├── vacant.R                  # Main analysis engine
 ├── cluster_score.R           # Log-transform & Pareto Clustering logic
 ├── analyze_set.R             # Statistical tests (Firth / ACAT)
-├── predict_vacant_cluster.R  # Clinical prediction module
-├── vacant_helpers.R          # Utilities (ACAT, safe_logistf, GMM-Kmeans)
-└── find_pareto_anchors.R     # Optimization algorithm
-
+├── predict_vacant_cluster.R  # Prediction function
 inst/bin/
 └── vacant                    # CLI Executable Script
+inst/extdata/
+└── geno.txt                  # Example Data
+└── score.txt                 # Example Data
+└── pheno.txt                 # Example Data
+└── cov.txt                   # Example Data
