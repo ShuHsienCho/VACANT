@@ -1,0 +1,22 @@
+# R package specific
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+*.tar.gz
+*.Rcheck/
+
+# Python specific
+__pycache__/
+*.pyc
+
+# Large Data files (不要上傳這類檔案)
+*.matrix.gz
+*.ped
+*.pca
+data/
+output/
+results/
+
+# OS specific
+.DS_Store
