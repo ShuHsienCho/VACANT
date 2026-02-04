@@ -14,6 +14,37 @@ Before preparing your input files, please adhere to these critical rules:
 
 ---
 
+## 🛠 Installation
+
+### 1. Prerequisites
+Ensure you have **R (>= 4.0.0)** installed. The workflow depends on several CRAN packages. Open R and run:
+
+```r
+install.packages(c("devtools", "logistf", "mclust", "stringi", "data.table", "dplyr", "optparse"))
+
+```
+
+### 2. Install VACANT Package
+
+Install the VACANT package from the source code in this repository:
+
+```r
+# Run inside the root directory of VACANT
+devtools::install_github("ShuHsienCho/VACANT")
+remotes::install_github("ShuHsienCho/VACANT")
+```
+
+### 3. Setup Scripts (for HPC/CLI)
+
+If you intend to use the LSF workflow, ensure the wrapper script is executable:
+
+```bash
+chmod +x code/run_vacant_job.R
+
+```
+
+---
+
 ## ⚡️ Quick Start with Example Data
 
 VACANT comes with built-in example datasets in `inst/extdata`.
