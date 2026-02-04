@@ -39,8 +39,8 @@ cov_df   <- data.table::fread(cov_file, header = FALSE, data.table = FALSE)
 
 # 3. Run Analysis
 result <- vacant(
-  geno.maf     = geno_df[[1]],      # Extract the genotype column
-  score.vector = as.matrix(score_df), 
+  geno         = geno_df[[1]],      # Extract the genotype column
+  score        = as.matrix(score_df), 
   phenotype    = data.frame(phenotype = pheno_df[[1]]), 
   covariates   = cov_df,
   test         = "multi"
@@ -180,8 +180,8 @@ cov_df    <- fread("data/cov.txt", header = TRUE, data.table = FALSE)
 
 # 2. Run Analysis
 result_obj <- vacant(
-  geno.maf     = geno_vec,
-  score.vector = score_mat,
+  geno         = geno_vec,
+  score        = score_mat,
   phenotype    = pheno_df,
   covariates   = cov_df,
   test         = "multi", 
