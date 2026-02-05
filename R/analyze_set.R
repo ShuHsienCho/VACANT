@@ -41,7 +41,7 @@ analyze_set <- function(pre, clus,
     for (i in seq_len(k)) {
       keep   <- clus.order[ i:k ]
       sel    <- clus$group.assignments %in% keep
-      ac.sel <- pre$geno.maf[sel]
+      ac.sel <- pre$geno[sel]
 
       gt.i   <- if (length(ac.sel) == 1) {
         utf8ToInt(ac.sel) - utf8ToInt("0")
