@@ -35,10 +35,16 @@ acat_p <- function(t, w) {
 #' @export
 perform_kmeans <- function(data, mod) {
   tryCatch({
+    # [FIXED] Removed intermediate sorting which breaks multi-dimensional data.
+    # Sorting is handled properly in cluster_score.R (Step 7).
+
+    # Extract K from Mclust result
     k <- length(unique(mod$classification))
-    initial <- stats::kmeans(data, centers = k)
-    centers_sorted <- sort(initial$centers)
-    stats::kmeans(data, centers = centers_sorted)
+
+    # Run K-means
+    # nstart=25 ensures stability (avoids local optima)
+    stats::kmeans(data, centers = k, nstart = 25)
+
   }, error = function(e) {
     message("Error in perform_kmeans: ", e$message, "; retrying in 1 second...")
     Sys.sleep(1)
@@ -55,7 +61,6 @@ perform_kmeans <- function(data, mod) {
 #' @return Character scalar of the extracted allele.
 #' @import stringi
 #' @export
-#' 
 extract_sub <- function(x, idx) {
   stringi::stri_c(stringi::stri_sub(x, from = idx, to = idx), collapse = "")
 }
@@ -106,29 +111,29 @@ safe_logistf <- function(formula, data, family="binomial", control, max_retries=
 #' non-dominated points (Pareto frontier) in O(N log N) or O(N * k) time.
 #'
 #' @param points Numeric matrix of points (e.g., scores of risk cluster variants).
-#' @return A matrix of anchor points defining the lower-left boundary, 
+#' @return A matrix of anchor points defining the lower-left boundary,
 #'   subset from the input \code{points}.
 #' @export
 find_pareto_anchors_optimized <- function(points) {
   if (is.null(points) || nrow(points) == 0) return(NULL)
   if (nrow(points) == 1) return(points)
-  
+
   # Deduplicate to reduce computation
   pts <- unique(points)
-  
+
   # 1. Sort: Sort by the first dimension (X), then subsequent dimensions
   ord <- do.call(order, as.data.frame(pts))
   pts.sorted <- pts[ord, , drop = FALSE]
-  
+
   # 2. Fast Scan
   # Pre-allocate memory (worst case: all points are anchors)
   anchors <- matrix(NA_real_, nrow = nrow(pts.sorted), ncol = ncol(pts.sorted))
   n.anchors <- 0
-  
+
   # Algorithm:
   # Since points are sorted by X, we only need to check if the current point
   # is dominated by any *previously found* anchors.
-  
+
   # Optimization for 2D case (O(N))
   if (ncol(pts) == 2) {
     min.y.so.far <- Inf
@@ -147,26 +152,26 @@ find_pareto_anchors_optimized <- function(points) {
     for (i in seq_len(nrow(pts.sorted))) {
       pt <- pts.sorted[i, ]
       is.dominated <- FALSE
-      
+
       if (n.anchors > 0) {
         # Check against existing anchors
         # Dominated if: Anchor <= pt (all dimensions)
         curr.anchors <- anchors[1:n.anchors, , drop = FALSE]
         diffs <- sweep(curr.anchors, 2, pt, "-")
-        
+
         # If any anchor is <= current point in all dimensions, current point is dominated
         if (any(rowSums(diffs <= 1e-9) == ncol(pts))) {
           is.dominated <- TRUE
         }
       }
-      
+
       if (!is.dominated) {
         n.anchors <- n.anchors + 1
         anchors[n.anchors, ] <- pt
       }
     }
   }
-  
+
   # Return valid rows
   return(anchors[1:n.anchors, , drop = FALSE])
 }
