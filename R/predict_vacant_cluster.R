@@ -9,8 +9,18 @@
 #' @export
 predict_vacant_cluster <- function(model, new.scores) {
 
-  if (model$type != "layered_pareto") {
-    stop("Unknown model type. Expected 'layered_pareto'.")
+  # Check model type
+  if (is.null(model$prediction.model) || model$prediction.model$type != "layered_pareto") {
+    # Handle case where model might be the full object or just the prediction part
+    if (!is.null(model$type) && model$type == "layered_pareto") {
+      # User passed prediction.model directly
+      pm <- model
+    } else {
+      stop("Invalid model object. Expected output from cluster_score().")
+    }
+  } else {
+    # User passed full cluster_score output
+    pm <- model$prediction.model
   }
 
   if (is.vector(new.scores)) {
@@ -19,15 +29,17 @@ predict_vacant_cluster <- function(model, new.scores) {
     new.scores <- as.matrix(new.scores)
   }
 
-  anchors.list <- model$anchors.list
-  K <- model$K
+  anchors.list <- pm$anchors.list
+  K <- pm$K
 
-  # Column validation
+  # Column validation using the first available non-null anchor set
   ref.cols <- NULL
-  for(k in 2:K) {
-    if(!is.null(anchors.list[[k]])) {
-      ref.cols <- colnames(anchors.list[[k]])
-      break
+  if (K > 1) {
+    for(k in 2:K) {
+      if(!is.null(anchors.list[[k]])) {
+        ref.cols <- colnames(anchors.list[[k]])
+        break
+      }
     }
   }
 
@@ -36,28 +48,48 @@ predict_vacant_cluster <- function(model, new.scores) {
     if (length(missing.cols) > 0) {
       stop(paste("Missing score columns in new.scores:", paste(missing.cols, collapse=", ")))
     }
+    # Reorder columns to match model
     new.scores <- new.scores[, ref.cols, drop = FALSE]
   }
 
   # ---- 1. Apply Transformation (Synced with Training) ----
-  if (!is.null(model$transform.method)) {
+  # Must match logic in cluster_score exactly
 
-    if (model$transform.method == "phred_to_chisq") {
+  if (!is.null(pm$transform.method)) {
+
+    if (pm$transform.method == "raw_squared") {
+      # [NEW] CADD/aPC Raw Score Logic: Truncate negative -> Square
+      new.scores <- pmax(new.scores, 0)^2
+
+    } else if (pm$transform.method == "phred_to_chisq") {
+      # PHRED Logic
       for (i in seq_len(ncol(new.scores))) {
         new.scores[, i] <- pmax(new.scores[, i], 0)
-        log_p_vals <- -(new.scores[, i] / 10) * log(10)
-        new.scores[, i] <- qchisq(log_p_vals, df = 1, lower.tail = FALSE, log.p = TRUE)
+        # Avoid log(0)
+        curr_vals <- new.scores[, i]
+        curr_vals[curr_vals == 0] <- 1e-6
 
-        if (any(is.infinite(new.scores[, i]))) {
-          max_val <- max(new.scores[!is.infinite(new.scores[, i]), i], na.rm = TRUE)
-          new.scores[is.infinite(new.scores[, i]), i] <- max_val * 1.1
+        log_p_vals <- -(curr_vals / 10) * log(10)
+
+        # Convert to Chi-sq
+        val_trans <- qchisq(log_p_vals, df = 1, lower.tail = FALSE, log.p = TRUE)
+
+        # Handle Inf
+        if (any(is.infinite(val_trans))) {
+          max_val <- max(val_trans[!is.infinite(val_trans)], na.rm = TRUE)
+          if(is.infinite(max_val)) max_val <- 100
+          val_trans[is.infinite(val_trans)] <- max_val * 1.1
         }
+        new.scores[, i] <- val_trans
       }
-    } else if (model$transform.method == "log") {
-      if (!is.null(model$shift.vals)) {
+
+    } else if (pm$transform.method == "log") {
+      # Log Logic
+      if (!is.null(pm$shift.vals)) {
         for (i in seq_len(ncol(new.scores))) {
-          if (model$shift.vals[i] > 0) {
-            new.scores[, i] <- new.scores[, i] + model$shift.vals[i]
+          # Apply stored shift values
+          if (length(pm$shift.vals) >= i && pm$shift.vals[i] > 0) {
+            new.scores[, i] <- new.scores[, i] + pm$shift.vals[i]
           }
         }
       }
@@ -65,14 +97,25 @@ predict_vacant_cluster <- function(model, new.scores) {
     }
   }
 
-  # ---- 2. Prediction Logic (Top-down) ----
+  # ---- 2. Scaling (Standardization) ----
+  # Prediction data must be scaled using training mean/sd
+  if (!is.null(pm$scale.mean) && !is.null(pm$scale.sd)) {
+    # t(t(X) - mean) / sd
+    new.scores <- scale(new.scores, center = pm$scale.mean, scale = pm$scale.sd)
+  }
+
+  # ---- 3. Prediction Logic (Top-down Pareto Check) ----
   n.samples <- nrow(new.scores)
   predictions <- integer(n.samples)
 
+  # Assign default cluster 1 (Low Risk)
+  predictions[] <- 1
+
+  # Iterate through samples
   for (i in seq_len(n.samples)) {
     pt <- new.scores[i, ]
-    assigned <- 1
 
+    # Check clusters from Highest Risk (K) down to 2
     if (K > 1) {
       for (k in K:2) {
         anchors.k <- anchors.list[[k]]
@@ -80,6 +123,8 @@ predict_vacant_cluster <- function(model, new.scores) {
         if (!is.null(anchors.k) && nrow(anchors.k) > 0) {
           is.in.risk.zone <- FALSE
 
+          # A point is in risk zone K if it dominates ANY anchor in K's Pareto frontier
+          # (i.e., point >= anchor for all dimensions)
           for (a.idx in seq_len(nrow(anchors.k))) {
             anchor <- anchors.k[a.idx, ]
             if (all(pt >= anchor)) {
@@ -89,13 +134,12 @@ predict_vacant_cluster <- function(model, new.scores) {
           }
 
           if (is.in.risk.zone) {
-            assigned <- k
-            break
+            predictions[i] <- k
+            break # Assigned to highest possible risk cluster, stop checking lower ones
           }
         }
       }
     }
-    predictions[i] <- assigned
   }
 
   return(predictions)

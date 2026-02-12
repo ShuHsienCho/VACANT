@@ -1,13 +1,13 @@
 #' Run the VACANT Analysis (Returning Model Object)
 #'
-#' @param geno Character vector. Genotype strings.
+#' @param geno Character vector. Genotype strings (one string per variant, containing genotypes for all samples).
 #' @param score Numeric matrix or vector. Annotation scores.
 #' @param phenotype Numeric vector. Phenotypes.
 #' @param covariates Numeric matrix or data.frame. Covariates (default NULL).
 #' @param test Character. "uni" or "multi" (default).
 #' @param acat.weight Character. "score" or "equal" (default).
 #' @param size.threshold Integer. Minimum cluster size.
-#' @param transform.method Character. "none" (default), "phred_to_chisq", or "log".
+#' @param transform.method Character. "none", "raw_squared", "phred_to_chisq", or "log".
 #' @return A list containing analysis results ($results) and the prediction model ($model).
 #' @import logistf stringi mclust stats
 #' @export
@@ -18,14 +18,15 @@ vacant <- function(geno,
                    test = c("uni", "multi"),
                    acat.weight = c("score", "equal"),
                    size.threshold = 10,
-                   transform.method = c("none", "phred_to_chisq", "log")) {
+                   transform.method = c("none", "raw_squared", "phred_to_chisq", "log")) {
 
   test <- match.arg(test)
   acat.weight <- match.arg(acat.weight)
   transform.method <- match.arg(transform.method)
 
   # ---- 2. Initial Firth P-value (Aggregated) ----
-  gt  <- if (length(geno) == 1) {
+  # Calculate Burden (GT sum) for initial association check
+  gt <- if (length(geno) == 1) {
     utf8ToInt(geno) - utf8ToInt("0")
   } else {
     Reduce(`+`, lapply(geno, function(s) utf8ToInt(s) - utf8ToInt("0")))
@@ -40,10 +41,19 @@ vacant <- function(geno,
 
   if (sum(gt.bin) == 0) return(NULL)
 
-  m1 <- safe_logistf(phenotype ~ ., data = df.firth,
-                     family = "binomial",
-                     control = logistf.control(maxit = 100),
-                     max_retries = 10)
+  # Safety check: ensure safe_logistf is available (helper function)
+  if (exists("safe_logistf")) {
+    m1 <- safe_logistf(phenotype ~ ., data = df.firth,
+                       family = "binomial",
+                       control = logistf.control(maxit = 100),
+                       max_retries = 10)
+  } else {
+    # Fallback to standard logistf if helper missing
+    m1 <- tryCatch({
+      logistf::logistf(phenotype ~ ., data = df.firth,
+                       control = logistf.control(maxit = 100))
+    }, error = function(e) NULL)
+  }
 
   if (is.null(m1)) return(NULL) # Safety check
 
@@ -59,8 +69,9 @@ vacant <- function(geno,
   )
 
   # ---- 3. Clustering ----
-  # 將 transform.method 傳遞給 cluster_score
-  clus <- cluster_score(score, geno, size.threshold, transform.method = transform.method)
+  # Pass transform.method to cluster_score
+  # Ensure cluster_score uses the updated signature
+  clus <- cluster_score(score, geno, size.threshold = size.threshold, transform.method = transform.method)
 
   if (is.null(clus)) {
     warning("Clustering failed. Returning NULL.")
@@ -68,7 +79,10 @@ vacant <- function(geno,
   }
 
   # ---- 4. Analysis ----
-  # 注意：請確保您的環境中有 analyze_set 函數
+  # Ensure analyze_set function exists in the package/environment
+  if (!exists("analyze_set")) {
+    stop("Function 'analyze_set' not found. Please ensure package is loaded correctly.")
+  }
   stats.out <- analyze_set(pre, clus, test = test, acat.weight = acat.weight)
 
   # [New Return Structure]
