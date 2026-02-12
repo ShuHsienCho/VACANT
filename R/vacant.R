@@ -1,5 +1,13 @@
 #' Run the VACANT Analysis (Returning Model Object)
 #'
+#' @param geno Character vector. Genotype strings.
+#' @param score Numeric matrix or vector. Annotation scores.
+#' @param phenotype Numeric vector. Phenotypes.
+#' @param covariates Numeric matrix or data.frame. Covariates (default NULL).
+#' @param test Character. "uni" or "multi" (default).
+#' @param acat.weight Character. "score" or "equal" (default).
+#' @param size.threshold Integer. Minimum cluster size.
+#' @param transform.method Character. "none" (default), "phred_to_chisq", or "log".
 #' @return A list containing analysis results ($results) and the prediction model ($model).
 #' @import logistf stringi mclust stats
 #' @export
@@ -9,13 +17,12 @@ vacant <- function(geno,
                    covariates = NULL,
                    test = c("uni", "multi"),
                    acat.weight = c("score", "equal"),
-                   size.threshold = 10) {
+                   size.threshold = 10,
+                   transform.method = c("none", "phred_to_chisq", "log")) {
 
   test <- match.arg(test)
   acat.weight <- match.arg(acat.weight)
-
-  # ... (Argument Validation & Firth Step 2 logic remains the same) ...
-  # [Copy Step 1 & 2 from your previous code]
+  transform.method <- match.arg(transform.method)
 
   # ---- 2. Initial Firth P-value (Aggregated) ----
   gt  <- if (length(geno) == 1) {
@@ -52,7 +59,8 @@ vacant <- function(geno,
   )
 
   # ---- 3. Clustering ----
-  clus <- cluster_score(score, geno, size.threshold)
+  # 將 transform.method 傳遞給 cluster_score
+  clus <- cluster_score(score, geno, size.threshold, transform.method = transform.method)
 
   if (is.null(clus)) {
     warning("Clustering failed. Returning NULL.")
@@ -60,6 +68,7 @@ vacant <- function(geno,
   }
 
   # ---- 4. Analysis ----
+  # 注意：請確保您的環境中有 analyze_set 函數
   stats.out <- analyze_set(pre, clus, test = test, acat.weight = acat.weight)
 
   # [New Return Structure]
@@ -70,7 +79,8 @@ vacant <- function(geno,
     info    = list(                 # Metadata
       test = test,
       weight = acat.weight,
-      n_vars = length(geno)
+      n_vars = length(geno),
+      transform = transform.method
     )
   ))
 }

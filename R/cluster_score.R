@@ -6,7 +6,7 @@
 #' @param score Numeric matrix or vector. Rows are variants, columns are score types.
 #' @param geno Character vector. Genotype strings for allele count weighting.
 #' @param size.threshold Integer. Minimum cluster size threshold (default 10).
-#' @param transform.method Character. "log" (default, applies log1p) or "none".
+#' @param transform.method Character. "none" (default), "phred_to_chisq", or "log".
 #' @return A list containing:
 #'   \item{group.assignments}{Integer vector of cluster IDs.}
 #'   \item{score.centers}{Matrix of cluster centers (Standardized & Sorted).}
@@ -18,7 +18,7 @@
 cluster_score <- function(score,
                           geno,
                           size.threshold = 10,
-                          transform.method = c("log", "none")) {
+                          transform.method = c("none", "phred_to_chisq", "log")) {
 
   transform.method <- match.arg(transform.method)
 
@@ -36,10 +36,28 @@ cluster_score <- function(score,
 
   if (any(is.na(score.mat))) stop("NA values found in score matrix.")
 
-  # ---- 2. Transformation (Fixing Skewness) ----
+  # ---- 2. Transformation (PHRED to Chi-Square or Log) ----
   shift.vals <- numeric(ncol(score.mat))
 
-  if (transform.method == "log") {
+  if (transform.method == "phred_to_chisq") {
+    for (i in seq_len(ncol(score.mat))) {
+      # 確保沒有負數 (PHRED 理論上 >= 0)
+      score.mat[, i] <- pmax(score.mat[, i], 0)
+
+      # 為了數值穩定性，計算 ln(P) 而非直接算 P
+      log_p_vals <- -(score.mat[, i] / 10) * log(10)
+
+      # 使用 log.p = TRUE 直接將對數機率轉為卡方值 (df = 1)
+      score.mat[, i] <- qchisq(log_p_vals, df = 1, lower.tail = FALSE, log.p = TRUE)
+
+      # 處理極端情況產生的 Inf (如果有的話，用次大值*1.1替代)
+      if (any(is.infinite(score.mat[, i]))) {
+        max_val <- max(score.mat[!is.infinite(score.mat[, i]), i], na.rm = TRUE)
+        score.mat[is.infinite(score.mat[, i]), i] <- max_val * 1.1
+      }
+    }
+  } else if (transform.method == "log") {
+    # 保留舊版邏輯以防向後相容需求
     for (i in seq_len(ncol(score.mat))) {
       col.min <- min(score.mat[, i])
       if (col.min < 0) {
@@ -119,8 +137,6 @@ cluster_score <- function(score,
   }
 
   # ---- 7. Sort Clusters & Calculate Weights ----
-  # [Corrected Logic]
-  # 1. Sort by Algebraic Value (Risk): Low (Benign) -> High (Pathogenic)
   center.vals <- rowSums(centers)
   ord <- order(center.vals)
 
@@ -139,8 +155,6 @@ cluster_score <- function(score,
   )
 
   # 2. Calculate Weights based on "Original" (Un-scaled) Magnitude
-  # Un-scale the centers: x_raw = x_z * sd + mean
-  # We use the transformed space (Log space), which is proportional to risk.
   unscaled.centers <- t(t(sorted.centers) * col.sds + col.means)
 
   # Sum across dimensions to get a scalar burden
@@ -149,7 +163,6 @@ cluster_score <- function(score,
   # Ensure Weights are Positive for ACAT
   min.burden <- min(raw.burden)
   if (min.burden <= 0) {
-    # Shift so the lowest risk cluster has a small positive weight (e.g. 0.1)
     final.weights <- raw.burden - min.burden + 0.1
   } else {
     final.weights <- raw.burden
@@ -179,13 +192,13 @@ cluster_score <- function(score,
     ac.weights        = final.weights,
     cluster.sizes     = sorted.sizes,
     prediction.model  = list(
-        type = "layered_pareto",
-        anchors.list = anchors.list,
-        K = K,
-        transform.method = transform.method,
-        shift.vals = shift.vals,
-        scale.mean = col.means,
-        scale.sd = col.sds
+      type = "layered_pareto",
+      anchors.list = anchors.list,
+      K = K,
+      transform.method = transform.method,
+      shift.vals = shift.vals,
+      scale.mean = col.means,
+      scale.sd = col.sds
     )
   )
 }

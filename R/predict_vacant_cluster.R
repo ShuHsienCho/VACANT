@@ -8,20 +8,20 @@
 #' @return An integer vector of cluster assignments.
 #' @export
 predict_vacant_cluster <- function(model, new.scores) {
-  
+
   if (model$type != "layered_pareto") {
     stop("Unknown model type. Expected 'layered_pareto'.")
   }
-  
+
   if (is.vector(new.scores)) {
     new.scores <- matrix(new.scores, nrow = 1)
   } else {
     new.scores <- as.matrix(new.scores)
   }
-  
+
   anchors.list <- model$anchors.list
   K <- model$K
-  
+
   # Column validation
   ref.cols <- NULL
   for(k in 2:K) {
@@ -30,7 +30,7 @@ predict_vacant_cluster <- function(model, new.scores) {
       break
     }
   }
-  
+
   if (!is.null(ref.cols) && !is.null(colnames(new.scores))) {
     missing.cols <- setdiff(ref.cols, colnames(new.scores))
     if (length(missing.cols) > 0) {
@@ -38,57 +38,65 @@ predict_vacant_cluster <- function(model, new.scores) {
     }
     new.scores <- new.scores[, ref.cols, drop = FALSE]
   }
-  
+
   # ---- 1. Apply Transformation (Synced with Training) ----
-  if (!is.null(model$transform.method) && model$transform.method == "log") {
-    
-    # Apply Shift (if any) stored in model
-    # Note: model$shift.vals aligns with columns in score.mat order
-    # Assuming new.scores columns match training order (we matched by name above if possible)
-    
-    if (!is.null(model$shift.vals)) {
-       for (i in seq_len(ncol(new.scores))) {
-         if (model$shift.vals[i] > 0) {
-           new.scores[, i] <- new.scores[, i] + model$shift.vals[i]
-         }
-       }
+  if (!is.null(model$transform.method)) {
+
+    if (model$transform.method == "phred_to_chisq") {
+      for (i in seq_len(ncol(new.scores))) {
+        new.scores[, i] <- pmax(new.scores[, i], 0)
+        log_p_vals <- -(new.scores[, i] / 10) * log(10)
+        new.scores[, i] <- qchisq(log_p_vals, df = 1, lower.tail = FALSE, log.p = TRUE)
+
+        if (any(is.infinite(new.scores[, i]))) {
+          max_val <- max(new.scores[!is.infinite(new.scores[, i]), i], na.rm = TRUE)
+          new.scores[is.infinite(new.scores[, i]), i] <- max_val * 1.1
+        }
+      }
+    } else if (model$transform.method == "log") {
+      if (!is.null(model$shift.vals)) {
+        for (i in seq_len(ncol(new.scores))) {
+          if (model$shift.vals[i] > 0) {
+            new.scores[, i] <- new.scores[, i] + model$shift.vals[i]
+          }
+        }
+      }
+      new.scores <- log1p(new.scores)
     }
-    
-    new.scores <- log1p(new.scores)
   }
-  
+
   # ---- 2. Prediction Logic (Top-down) ----
   n.samples <- nrow(new.scores)
-  predictions <- integer(n.samples) 
-  
+  predictions <- integer(n.samples)
+
   for (i in seq_len(n.samples)) {
     pt <- new.scores[i, ]
-    assigned <- 1 
-    
+    assigned <- 1
+
     if (K > 1) {
       for (k in K:2) {
         anchors.k <- anchors.list[[k]]
-        
+
         if (!is.null(anchors.k) && nrow(anchors.k) > 0) {
           is.in.risk.zone <- FALSE
-          
+
           for (a.idx in seq_len(nrow(anchors.k))) {
             anchor <- anchors.k[a.idx, ]
             if (all(pt >= anchor)) {
               is.in.risk.zone <- TRUE
-              break 
+              break
             }
           }
-          
+
           if (is.in.risk.zone) {
             assigned <- k
-            break 
+            break
           }
         }
       }
     }
     predictions[i] <- assigned
   }
-  
+
   return(predictions)
 }
