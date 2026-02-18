@@ -18,7 +18,7 @@ vacant <- function(geno,
                    test = c("uni", "multi"),
                    acat.weight = c("score", "equal"),
                    size.threshold = 10,
-                   transform.method = c("none", "raw_squared", "phred_to_chisq", "log")) {
+                   transform.method = c("none", "raw_squared", "phred_to_chisq", "log", "sigmoid")) {
 
   test <- match.arg(test)
   acat.weight <- match.arg(acat.weight)

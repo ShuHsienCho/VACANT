@@ -72,6 +72,8 @@ cluster_score <- function(score,
       }
     }
     score.mat <- log1p(score.mat)
+  } else if (transform.method == "sigmoid") {
+    score.mat <- 1 / (1 + exp(-score.mat))
   }
 
   # ---- 3. Scaling (Standardization) ----

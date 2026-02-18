@@ -94,6 +94,8 @@ predict_vacant_cluster <- function(model, new.scores) {
         }
       }
       new.scores <- log1p(new.scores)
+    } else if (!is.null(pm$transform.method) && pm$transform.method == "sigmoid") {
+      new.scores <- 1 / (1 + exp(-new.scores))
     }
   }
 
