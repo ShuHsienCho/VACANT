@@ -18,7 +18,7 @@
 cluster_score <- function(score,
                           geno,
                           size.threshold = 10,
-                          transform.method = c("none", "raw_squared", "phred_to_chisq", "log")) {
+                          transform.method = c("none", "raw_squared", "phred_to_chisq", "log", "sigmoid")) {
 
   transform.method <- match.arg(transform.method)
 
