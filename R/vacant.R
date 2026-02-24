@@ -90,23 +90,17 @@ vacant <- function(matrix.file,
   message(sprintf("[%s] Reading matrix header...",
                   format(Sys.time(), "%H:%M:%S")))
 
-  # Header only: gzcon reads just the first line without decompressing the whole file.
+  # Open one connection: readLines takes the header, fread starts from row 2.
+  # fread never sees the 200k-column header line so no OOM.
   con       <- gzcon(file(matrix.file, "rb"))
   col.names <- strsplit(readLines(con, n = 1L), "\t")[[1]]
-  close(con)
 
   message(sprintf("[%s] Reading matrix data (%d samples)...",
                   format(Sys.time(), "%H:%M:%S"),
                   length(col.names) - meta.ncols))
 
-  # Data rows naturally have only meta.ncols + 1 columns (the genotype string
-  # is concatenated), so fread reads 12 cols without any select= overhead.
-  matrix.dt <- data.table::fread(
-    matrix.file,
-    header     = TRUE,
-    select     = seq_len(meta.ncols + 1L),
-    colClasses = "character"
-  )
+  matrix.dt <- data.table::fread(con, header = FALSE, colClasses = "character")
+  close(con)
 
   if (nrow(matrix.dt) == 0L) stop("Matrix file is empty.")
 
