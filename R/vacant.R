@@ -90,12 +90,7 @@ vacant <- function(matrix.file,
   message(sprintf("[%s] Reading matrix header...",
                   format(Sys.time(), "%H:%M:%S")))
 
-  # Use shell head -1 to read only the header line.
-  # fread(nrows=0) would load all 200k+ sample ID column names into memory,
-  # causing OOM on UKB-scale region matrices.
-  header.line <- system(paste("zcat", shQuote(matrix.file), "| head -1"),
-                        intern = TRUE)
-  col.names   <- strsplit(header.line, "\t")[[1]]
+  col.names <- names(data.table::fread(matrix.file, nrows = 0L))
 
   message(sprintf("[%s] Reading matrix data (%d samples)...",
                   format(Sys.time(), "%H:%M:%S"),
@@ -105,7 +100,7 @@ vacant <- function(matrix.file,
   # concatenated genotype string). Using select= avoids fread building a
   # 200k-column table from the header/data mismatch, which was extremely slow.
   matrix.dt <- data.table::fread(
-    cmd        = paste("zcat", shQuote(matrix.file)),
+    matrix.file,
     header     = FALSE,
     skip       = 1L,
     select     = seq_len(meta.ncols + 1L),
