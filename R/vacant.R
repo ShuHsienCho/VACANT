@@ -90,20 +90,21 @@ vacant <- function(matrix.file,
   message(sprintf("[%s] Reading matrix header...",
                   format(Sys.time(), "%H:%M:%S")))
 
-  col.names <- names(data.table::fread(matrix.file, nrows = 0L))
+  # Header only: gzcon reads just the first line without decompressing the whole file.
+  con       <- gzcon(file(matrix.file, "rb"))
+  col.names <- strsplit(readLines(con, n = 1L), "\t")[[1]]
+  close(con)
 
   message(sprintf("[%s] Reading matrix data (%d samples)...",
                   format(Sys.time(), "%H:%M:%S"),
                   length(col.names) - meta.ncols))
 
-  # Data rows have only meta.ncols + 1 columns (cols 1-11 = metadata, col 12 =
-  # concatenated genotype string). Using select= avoids fread building a
-  # 200k-column table from the header/data mismatch, which was extremely slow.
+  # Data rows naturally have only meta.ncols + 1 columns (the genotype string
+  # is concatenated), so fread reads 12 cols without any select= overhead.
   matrix.dt <- data.table::fread(
     matrix.file,
     header     = FALSE,
     skip       = 1L,
-    select     = seq_len(meta.ncols + 1L),
     colClasses = "character"
   )
 
@@ -146,9 +147,7 @@ vacant <- function(matrix.file,
     result <- tryCatch({
 
       gene.pattern <- sprintf("(^|[,;])\\s*%s\\s*([,;]|$)", target.gene)
-      sub.mat <- as.data.frame(
-        matrix.dt[grepl(gene.pattern, matrix.dt[[gene.col]]), ]
-      )
+      sub.mat <- matrix.dt[grepl(gene.pattern, matrix.dt[[gene.col]]), ]
 
       if (nrow(sub.mat) == 0L) {
         return(list(status = "fail", gene = target.gene,

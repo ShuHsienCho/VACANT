@@ -257,7 +257,9 @@ internal_prepare_inputs <- function(sub.matrix,
   }
 
   # ---- 4. Score alignment ----
-  var.info   <- sub.matrix[, 1:8, drop = FALSE]
+  # Convert only the small 8-col slice to data.frame for dplyr::left_join.
+  # Avoids converting the full matrix (potentially thousands of variants).
+  var.info   <- as.data.frame(sub.matrix[, 1:8, drop = FALSE])
   colnames(var.info) <- col.names[1:8]
 
   score.work <- score.dt
@@ -283,7 +285,7 @@ internal_prepare_inputs <- function(sub.matrix,
                 message = "All variants missing scores after join"))
   }
 
-  sub.matrix <- sub.matrix[keep.score, , drop = FALSE]
+  sub.matrix <- sub.matrix[keep.score, ]
   score.mat  <- score.mat[keep.score, , drop = FALSE]
 
   # ---- 5. Genotype extraction ----
