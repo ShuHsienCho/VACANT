@@ -101,13 +101,14 @@ vacant <- function(matrix.file,
                   format(Sys.time(), "%H:%M:%S"),
                   length(col.names) - meta.ncols))
 
-  # Data rows only have meta.ncols + 1 columns (genotype string is concatenated).
-  # Read with fill=TRUE to suppress the column count mismatch warning.
+  # Data rows have only meta.ncols + 1 columns (cols 1-11 = metadata, col 12 =
+  # concatenated genotype string). Using select= avoids fread building a
+  # 200k-column table from the header/data mismatch, which was extremely slow.
   matrix.dt <- data.table::fread(
     cmd        = paste("zcat", shQuote(matrix.file)),
     header     = FALSE,
     skip       = 1L,
-    fill       = TRUE,
+    select     = seq_len(meta.ncols + 1L),
     colClasses = "character"
   )
 
@@ -142,63 +143,80 @@ vacant <- function(matrix.file,
                   paste(unique.genes, collapse = ", ")))
 
   # ---- 4. Worker: process one gene ----
+  # Returns a data.frame on success, or a list(status="fail", gene=..., reason=...)
+  # on any failure. Never throws — all errors are caught and recorded so that
+  # mclapply error objects are never silently swallowed.
   process_gene <- function(target.gene) {
 
-    gene.pattern <- sprintf("(^|[,;])\\s*%s\\s*([,;]|$)", target.gene)
-    sub.mat <- as.data.frame(
-      matrix.dt[grepl(gene.pattern, matrix.dt[[gene.col]]), ]
-    )
+    result <- tryCatch({
 
-    if (nrow(sub.mat) == 0L) {
-      message(sprintf("  [%s] SKIP - no variants found", target.gene))
-      return(NULL)
-    }
+      gene.pattern <- sprintf("(^|[,;])\\s*%s\\s*([,;]|$)", target.gene)
+      sub.mat <- as.data.frame(
+        matrix.dt[grepl(gene.pattern, matrix.dt[[gene.col]]), ]
+      )
 
-    prepared <- internal_prepare_inputs(
-      sub.matrix    = sub.mat,
-      col.names     = col.names,
-      ped.dt        = ped.dt,
-      cov.dt        = cov.dt,
-      score.dt      = score.dt,
-      score.cols    = score.cols,
-      maf.threshold = maf.threshold,
-      meta.ncols    = meta.ncols
-    )
-
-    if (prepared$status != "success") {
-      message(sprintf("  [%s] SKIP - %s", target.gene, prepared$message))
-      return(NULL)
-    }
-
-    message(sprintf("  [%s] Running vacant_core() on %d variants / %d samples...",
-                    target.gene,
-                    length(prepared$geno),
-                    nrow(prepared$phenotype)))
-
-    vacant.obj <- tryCatch(
-      vacant_core(
-        geno             = prepared$geno,
-        score            = prepared$score,
-        phenotype        = prepared$phenotype,
-        covariates       = prepared$covariates,
-        test             = test,
-        acat.weight      = acat.weight,
-        size.threshold   = size.threshold,
-        transform.method = transform.method
-      ),
-      error = function(e) {
-        warning(sprintf("vacant_core() error for %s: %s", target.gene, e$message))
-        NULL
+      if (nrow(sub.mat) == 0L) {
+        return(list(status = "fail", gene = target.gene,
+                    reason = "no variants found in matrix"))
       }
-    )
 
-    if (is.null(vacant.obj)) return(NULL)
+      prepared <- internal_prepare_inputs(
+        sub.matrix    = sub.mat,
+        col.names     = col.names,
+        ped.dt        = ped.dt,
+        cov.dt        = cov.dt,
+        score.dt      = score.dt,
+        score.cols    = score.cols,
+        maf.threshold = maf.threshold,
+        meta.ncols    = meta.ncols
+      )
 
-    res.df            <- as.data.frame(t(vacant.obj$results))
-    res.df$gene       <- target.gene
-    res.df$n_variants <- length(prepared$geno)
-    res.df$.model     <- list(vacant.obj$model)
-    res.df
+      if (prepared$status != "success") {
+        return(list(status = "fail", gene = target.gene,
+                    reason = prepared$message))
+      }
+
+      vacant.obj <- tryCatch(
+        vacant_core(
+          geno             = prepared$geno,
+          score            = prepared$score,
+          phenotype        = prepared$phenotype,
+          covariates       = prepared$covariates,
+          test             = test,
+          acat.weight      = acat.weight,
+          size.threshold   = size.threshold,
+          transform.method = transform.method
+        ),
+        error = function(e) {
+          list(status = "fail", gene = target.gene,
+               reason = paste("vacant_core() error:", e$message))
+        }
+      )
+
+      # vacant_core returns NULL when there are no carriers
+      if (is.null(vacant.obj)) {
+        return(list(status = "fail", gene = target.gene,
+                    reason = "vacant_core() returned NULL (no carriers)"))
+      }
+      # vacant_core returned a fail list (from inner tryCatch above)
+      if (is.list(vacant.obj) && identical(vacant.obj$status, "fail")) {
+        return(vacant.obj)
+      }
+
+      res.df            <- as.data.frame(t(vacant.obj$results))
+      res.df$gene       <- target.gene
+      res.df$n_variants <- length(prepared$geno)
+      res.df$n_samples  <- nrow(prepared$phenotype)
+      res.df$.model     <- list(vacant.obj$model)
+      res.df
+
+    }, error = function(e) {
+      # Catch any unexpected error (e.g. from grepl, as.data.frame, etc.)
+      list(status = "fail", gene = target.gene,
+           reason = paste("unexpected error:", e$message))
+    })
+
+    result
   }
 
   # ---- 5. Execute (parallel or sequential) ----
@@ -211,12 +229,22 @@ vacant <- function(matrix.file,
     results.list <- lapply(unique.genes, process_gene)
   }
 
-  # ---- 6. Aggregate ----
-  # mclapply returns error objects (not NULL) when a worker fails.
-  # Filter these out explicitly before rbindlist.
-  results.list <- Filter(function(x) {
-    !is.null(x) && !inherits(x, "error") && !inherits(x, "try-error") && is.data.frame(x)
-  }, results.list)
+  # ---- 6. Separate successes from failures and report ----
+  # mclapply error objects (inherits "error") are caught by the outer tryCatch
+  # inside process_gene, so they appear as fail lists, not raw error objects.
+  is.success <- function(x) is.data.frame(x)
+  is.fail    <- function(x) is.list(x) && identical(x$status, "fail")
+
+  failed.list  <- Filter(is.fail,    results.list)
+  results.list <- Filter(is.success, results.list)
+
+  # Report all failures with reasons (visible in .e log even with mclapply)
+  if (length(failed.list) > 0L) {
+    fail.summary <- vapply(failed.list, function(x) {
+      sprintf("  SKIP [%s]: %s", x$gene, x$reason)
+    }, character(1L))
+    message(paste(fail.summary, collapse = "\n"))
+  }
 
   if (length(results.list) == 0L) {
     warning("All genes failed or returned no results.")
