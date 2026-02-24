@@ -103,8 +103,8 @@ vacant <- function(matrix.file,
   # is concatenated), so fread reads 12 cols without any select= overhead.
   matrix.dt <- data.table::fread(
     matrix.file,
-    header     = FALSE,
-    skip       = 1L,
+    header     = TRUE,
+    select     = seq_len(meta.ncols + 1L),
     colClasses = "character"
   )
 
