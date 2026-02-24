@@ -264,6 +264,8 @@ internal_prepare_inputs <- function(sub.matrix,
 
   score.work <- score.dt
   colnames(score.work)[1:8] <- col.names[1:8]
+  # var.info is character (fread colClasses="character"); match types for join
+  score.work[, 1:8] <- lapply(score.work[, 1:8], as.character)
 
   if (is.null(score.cols)) {
     colnames(score.work)[9] <- "score"
@@ -317,4 +319,43 @@ internal_prepare_inputs <- function(sub.matrix,
     phenotype  = pheno.final,
     covariates = cov.final
   )
+}
+
+#' Ensure bgzip + tabix index exists for a matrix file
+#'
+#' Converts a .gz matrix file to bgzip format and builds a tabix index
+#' keyed on the gene name column. The .bgz and .tbi files are written
+#' next to the original .gz file. This is a one-time setup; subsequent
+#' calls return immediately if the index already exists.
+#'
+#' @param gz.file Character. Path to the gzipped matrix file.
+#' @param gene.col Integer. Column index of the gene name field (default 7).
+#' @return Character. Path to the .bgz file.
+#' @export
+ensure_bgz_index <- function(gz.file, gene.col = 7L) {
+
+  bgz.file <- sub("\\.gz$", ".bgz", gz.file)
+  tbi.file <- paste0(bgz.file, ".tbi")
+
+  if (!file.exists(bgz.file) || !file.exists(tbi.file)) {
+    message(sprintf(
+      "[%s] Building bgzip+tabix index (one-time setup, may take a few minutes)...",
+      format(Sys.time(), "%H:%M:%S")
+    ))
+
+    ret <- system(paste("zcat", shQuote(gz.file), "| bgzip >", shQuote(bgz.file)))
+    if (ret != 0L) stop("bgzip conversion failed for: ", gz.file)
+
+    ret <- system(paste(
+      "tabix -s", gene.col, "-b 2 -e 3 -S 1", shQuote(bgz.file)
+    ))
+    if (ret != 0L) stop("tabix indexing failed for: ", bgz.file)
+
+    message(sprintf("[%s] Index ready: %s", format(Sys.time(), "%H:%M:%S"), bgz.file))
+  } else {
+    message(sprintf("[%s] Using existing bgz index: %s",
+                    format(Sys.time(), "%H:%M:%S"), bgz.file))
+  }
+
+  bgz.file
 }

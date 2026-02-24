@@ -69,6 +69,9 @@ option.list <- list(
   make_option("--n_cores",
               type = "integer", default = 1L,
               help = "[Analysis] CPU cores for parallel gene processing (default: 1)."),
+  make_option("--use_tabix",
+              type = "logical", default = FALSE,
+              help = "[Analysis] Use bgzip+tabix for fast per-gene access in large region matrices (default: FALSE). Recommended for chromosome/region-level matrices with many samples. Gene-level matrices (e.g. power simulations) do not need this."),
 
   # --- Prediction Mode ---
   make_option("--model",
@@ -177,8 +180,9 @@ if (!is.null(args$score_cols) && nzchar(args$score_cols)) {
 }
 
 message(sprintf(
-  "[vacant] test=%s | transform=%s | maf=%.4f | size_threshold=%d | n_cores=%d",
-  args$test, args$transform, args$maf, args$size_threshold, args$n_cores
+  "[vacant] test=%s | transform=%s | maf=%.4f | size_threshold=%d | n_cores=%d | use_tabix=%s",
+  args$test, args$transform, args$maf, args$size_threshold, args$n_cores,
+  args$use_tabix
 ))
 
 result.dt <- tryCatch(
@@ -195,7 +199,8 @@ result.dt <- tryCatch(
     acat.weight      = args$weight,
     gene.col         = args$gene_col,
     meta.ncols       = args$meta_ncols,
-    n.cores          = args$n_cores
+    n.cores          = args$n_cores,
+    use.tabix        = args$use_tabix
   ),
   error = function(e) {
     stop(sprintf("[vacant] Error in vacant(): %s", e$message), call. = FALSE)

@@ -17,7 +17,8 @@ vacant(
   acat.weight = c("score", "equal"),
   gene.col = 7L,
   meta.ncols = 11L,
-  n.cores = 1L
+  n.cores = 1L,
+  use.tabix = FALSE
 )
 }
 \arguments{
@@ -65,6 +66,11 @@ string column (default: 11, standard XPAT 2.0).}
 \item{n.cores}{Integer. Number of CPU cores for parallel gene processing.
 Use 1 (default) for single-gene matrices. Set higher for
 chromosome-level matrices with many genes (Linux/macOS only).}
+
+\item{use.tabix}{Logical. If TRUE, converts the matrix to bgzip format and
+builds a tabix index for fast per-gene random access. Recommended for
+large region/chromosome-level matrices. If FALSE (default), uses direct
+zcat streaming, which is sufficient for small gene-level matrices.}
 }
 \value{
 A \code{data.table} with one row per gene containing p-values,

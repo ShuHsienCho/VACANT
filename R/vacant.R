@@ -38,6 +38,10 @@
 #' @param n.cores Integer. Number of CPU cores for parallel gene processing.
 #'   Use 1 (default) for single-gene matrices. Set higher for
 #'   chromosome-level matrices with many genes (Linux/macOS only).
+#' @param use.tabix Logical. If TRUE, converts the matrix to bgzip format and
+#'   builds a tabix index for fast per-gene random access. Recommended for
+#'   large region/chromosome-level matrices. If FALSE (default), uses direct
+#'   zcat streaming, which is sufficient for small gene-level matrices.
 #'
 #' @return A \code{data.table} with one row per gene containing p-values,
 #'   effect estimates, cluster statistics, and metadata. Returns NULL if
@@ -72,7 +76,8 @@ vacant <- function(matrix.file,
                    acat.weight      = c("score", "equal"),
                    gene.col         = 7L,
                    meta.ncols       = 11L,
-                   n.cores          = 1L) {
+                   n.cores          = 1L,
+                   use.tabix        = FALSE) {
 
   transform.method <- match.arg(transform.method)
   test             <- match.arg(test)
@@ -86,26 +91,19 @@ vacant <- function(matrix.file,
     stop("Covariate file not found: ", cov.file)
   }
 
-  # ---- 2. Read all files into memory (single I/O pass) ----
+  # ---- 2. Read header, PED, scores, covariates into memory ----
+  # matrix is NOT read here - bgz index handles per-gene access.
   message(sprintf("[%s] Reading matrix header...",
                   format(Sys.time(), "%H:%M:%S")))
 
-  col.names <- names(data.table::fread(
-    cmd = paste("zcat", shQuote(matrix.file)),
-    nrows = 0L
-  ))
+  col.names <- strsplit(
+    system(paste("zcat", shQuote(matrix.file), "| head -1"), intern = TRUE),
+    "\t"
+  )[[1]]
 
-  message(sprintf("[%s] Reading matrix data (%d samples)...",
+  message(sprintf("[%s] %d samples in matrix.",
                   format(Sys.time(), "%H:%M:%S"),
                   length(col.names) - meta.ncols))
-
-  matrix.dt <- data.table::fread(
-    cmd        = paste("zcat", shQuote(matrix.file), "| tail -n +2"),
-    header     = FALSE,
-    colClasses = "character"
-  )
-
-  if (nrow(matrix.dt) == 0L) stop("Matrix file is empty.")
 
   message(sprintf("[%s] Reading ped...", format(Sys.time(), "%H:%M:%S")))
   ped.dt <- data.table::fread(ped.file, header = TRUE, data.table = FALSE)
@@ -121,9 +119,26 @@ vacant <- function(matrix.file,
     colnames(cov.dt) <- c("iid", paste0("PC", seq_len(ncol(cov.dt) - 1L)))
   }
 
-  # ---- 3. Detect unique genes ----
-  raw.genes    <- matrix.dt[[gene.col]]
-  split.genes  <- trimws(unlist(strsplit(as.character(raw.genes), "[,;]")))
+  # ---- 3. Prepare matrix access (bgz or gz) ----
+  if (use.tabix) {
+    mat.handle <- ensure_bgz_index(matrix.file, gene.col = gene.col)
+
+    # Detect genes via tabix --list-chroms
+    message(sprintf("[%s] Detecting genes...", format(Sys.time(), "%H:%M:%S")))
+    raw.genes <- system(paste("tabix --list-chroms", shQuote(mat.handle)), intern = TRUE)
+  } else {
+    mat.handle <- matrix.file
+
+    # Detect genes via zcat | awk (suitable for small/gene-level matrices)
+    message(sprintf("[%s] Detecting genes...", format(Sys.time(), "%H:%M:%S")))
+    raw.genes <- system(
+      paste("zcat", shQuote(matrix.file),
+            "| awk 'NR>1{print $", gene.col, "}' | sort -u"),
+      intern = TRUE
+    )
+  }
+
+  split.genes  <- trimws(unlist(strsplit(raw.genes, "[,;]")))
   unique.genes <- unique(
     split.genes[split.genes != "" & split.genes != "." & !is.na(split.genes)]
   )
@@ -131,20 +146,30 @@ vacant <- function(matrix.file,
 
   if (n.genes == 0L) stop("No valid genes detected in matrix column ", gene.col)
 
-  message(sprintf("[%s] Detected %d gene(s): %s",
-                  format(Sys.time(), "%H:%M:%S"), n.genes,
-                  paste(unique.genes, collapse = ", ")))
+  message(sprintf("[%s] Detected %d gene(s).", format(Sys.time(), "%H:%M:%S"), n.genes))
 
-  # ---- 4. Worker: process one gene ----
-  # Returns a data.frame on success, or a list(status="fail", gene=..., reason=...)
-  # on any failure. Never throws — all errors are caught and recorded so that
-  # mclapply error objects are never silently swallowed.
+  # ---- 4. Worker: per-gene matrix access ----
   process_gene <- function(target.gene) {
 
     result <- tryCatch({
 
-      gene.pattern <- sprintf("(^|[,;])\\s*%s\\s*([,;]|$)", target.gene)
-      sub.mat <- matrix.dt[grepl(gene.pattern, matrix.dt[[gene.col]]), ]
+      if (use.tabix) {
+        # tabix: instant random access by gene name
+        sub.mat <- data.table::fread(
+          cmd        = paste("tabix", shQuote(mat.handle), shQuote(target.gene)),
+          header     = FALSE,
+          colClasses = "character"
+        )
+      } else {
+        # zcat | awk: stream and filter (fast for small matrices)
+        sub.mat <- data.table::fread(
+          cmd        = paste0("zcat ", shQuote(mat.handle),
+                              " | awk 'NR>1 && $", gene.col,
+                              "==\"", target.gene, "\"'"),
+          header     = FALSE,
+          colClasses = "character"
+        )
+      }
 
       if (nrow(sub.mat) == 0L) {
         return(list(status = "fail", gene = target.gene,
