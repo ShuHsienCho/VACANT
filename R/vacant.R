@@ -90,17 +90,20 @@ vacant <- function(matrix.file,
   message(sprintf("[%s] Reading matrix header...",
                   format(Sys.time(), "%H:%M:%S")))
 
-  # Open one connection: readLines takes the header, fread starts from row 2.
-  # fread never sees the 200k-column header line so no OOM.
-  con       <- gzcon(file(matrix.file, "rb"))
-  col.names <- strsplit(readLines(con, n = 1L), "\t")[[1]]
+  col.names <- names(data.table::fread(
+    cmd = paste("zcat", shQuote(matrix.file)),
+    nrows = 0L
+  ))
 
   message(sprintf("[%s] Reading matrix data (%d samples)...",
                   format(Sys.time(), "%H:%M:%S"),
                   length(col.names) - meta.ncols))
 
-  matrix.dt <- data.table::fread(con, header = FALSE, colClasses = "character")
-  close(con)
+  matrix.dt <- data.table::fread(
+    cmd        = paste("zcat", shQuote(matrix.file), "| tail -n +2"),
+    header     = FALSE,
+    colClasses = "character"
+  )
 
   if (nrow(matrix.dt) == 0L) stop("Matrix file is empty.")
 
