@@ -2,7 +2,7 @@
 % Please edit documentation in R/vacant_helpers.R
 \name{extract_sub}
 \alias{extract_sub}
-\title{Extract Per-Sample Allele from Genotype Strings}
+\title{Extract Per-Sample Alleles from Genotype Strings}
 \usage{
 extract_sub(x, idx)
 }
@@ -12,7 +12,7 @@ extract_sub(x, idx)
 \item{idx}{Integer vector. Sample positions to extract.}
 }
 \value{
-Character scalar of the extracted alleles (one character per sample).
+Character scalar of extracted alleles (one character per sample).
 }
 \description{
 Given a vector of XPAT-format genotype strings (one per variant) and a

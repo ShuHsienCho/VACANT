@@ -25,25 +25,26 @@ vacant(
 May contain one or multiple genes.}
 
 \item{ped.file}{Character. Path to PED file. Expected header:
-\code{#fid iid pid mid sex aff platform ignore} (8 cols). Phenotype
-column (\code{aff}) uses PLINK 1/2 coding (1 = control, 2 = case).}
+\code{#fid iid pid mid sex aff platform ignore}. Phenotype column
+(\code{aff}) uses PLINK 1/2 coding (1 = control, 2 = case).}
 
 \item{score.file}{Character. Path to annotation score file (no header).
 Cols 1-8 must be genomic coordinate metadata matching the matrix;
 cols 9+ are numeric scores.}
 
 \item{cov.file}{Character or NULL. Path to covariate file (no header).
-Col 1 = IID, cols 2+ = numeric covariates (PCs, age, etc.)
-\link{default NULL}.}
+Col 1 = IID, cols 2+ = numeric covariates (PCs, age, etc.).
+(default: NULL).}
 
 \item{score.cols}{Character vector or NULL. Names to assign to score
-columns (col 9+ of \code{score.file}). \code{NULL} uses a single
-column named \code{"score"}.}
+columns (col 9+ of \code{score.file}). NULL uses a single column
+named \code{"score"}.}
 
 \item{maf.threshold}{Numeric. Upper MAF bound for rare variant filtering
-\link{default 0.01}.}
+(default: 0.01).}
 
-\item{size.threshold}{Integer. Minimum cluster size for K-means \link{default 10}.}
+\item{size.threshold}{Integer. Minimum cluster size for K-means
+(default: 10).}
 
 \item{transform.method}{Character. Score transformation applied before
 clustering: \code{"none"} (default), \code{"raw_squared"},
@@ -56,22 +57,19 @@ or \code{"uni"} (sequential univariate + ACAT).}
 or \code{"equal"}.}
 
 \item{gene.col}{Integer. Column index of the gene name field in the matrix
-\link{default 7, standard XPAT 2.0}.}
+(default: 7, standard XPAT 2.0).}
 
 \item{meta.ncols}{Integer. Number of metadata columns before the genotype
-string column \link{default 11, standard XPAT 2.0}.}
+string column (default: 11, standard XPAT 2.0).}
 
 \item{n.cores}{Integer. Number of CPU cores for parallel gene processing.
-Use \code{n.cores = 1} (default) for single-gene matrices or sequential
-execution. Set \code{n.cores > 1} for chromosome-level matrices with
-many genes (Linux/macOS only; uses \code{parallel::mclapply}).}
+Use 1 (default) for single-gene matrices. Set higher for
+chromosome-level matrices with many genes (Linux/macOS only).}
 }
 \value{
 A \code{data.table} with one row per gene containing p-values,
-effect estimates, cluster statistics, and metadata. Returns \code{NULL}
-if all genes fail.
-Each row also contains an \code{rds.path} attribute if results are saved
-to disk via \code{run_vacant_job.R}.
+effect estimates, cluster statistics, and metadata. Returns NULL if
+all genes fail.
 }
 \description{
 Main entry point for the VACANT package. Accepts file paths to an XPAT 2.0
@@ -82,7 +80,6 @@ each gene. Supports parallel execution for multi-gene matrices.
 }
 \examples{
 \dontrun{
-# Single-gene matrix (typical for HPC simulation jobs)
 result <- vacant(
   matrix.file      = "XPAT.region.ATM_QC.matrix.gz",
   ped.file         = "UKB.BREAST.unrelated.ped",
@@ -92,16 +89,6 @@ result <- vacant(
   maf.threshold    = 0.005,
   transform.method = "none",
   test             = "multi"
-)
-
-# Chromosome-level matrix (parallel execution)
-result <- vacant(
-  matrix.file = "XPAT.chr17.matrix.gz",
-  ped.file    = "UKB.BREAST.unrelated.ped",
-  score.file  = "casm_avg_spliceAI.txt",
-  cov.file    = "UKB.BREAST.unrelated.pca",
-  score.cols  = c("CADD", "aPC"),
-  n.cores     = 8
 )
 }
 

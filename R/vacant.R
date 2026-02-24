@@ -90,17 +90,24 @@ vacant <- function(matrix.file,
   message(sprintf("[%s] Reading matrix header...",
                   format(Sys.time(), "%H:%M:%S")))
 
-  col.names <- names(
-    data.table::fread(cmd = paste("zcat", matrix.file), nrows = 0L)
-  )
+  # Use shell head -1 to read only the header line.
+  # fread(nrows=0) would load all 200k+ sample ID column names into memory,
+  # causing OOM on UKB-scale region matrices.
+  header.line <- system(paste("zcat", shQuote(matrix.file), "| head -1"),
+                        intern = TRUE)
+  col.names   <- strsplit(header.line, "\t")[[1]]
 
-  message(sprintf("[%s] Reading matrix data (%d columns)...",
-                  format(Sys.time(), "%H:%M:%S"), length(col.names)))
+  message(sprintf("[%s] Reading matrix data (%d samples)...",
+                  format(Sys.time(), "%H:%M:%S"),
+                  length(col.names) - meta.ncols))
 
+  # Data rows only have meta.ncols + 1 columns (genotype string is concatenated).
+  # Read with fill=TRUE to suppress the column count mismatch warning.
   matrix.dt <- data.table::fread(
-    cmd        = paste("zcat", matrix.file),
+    cmd        = paste("zcat", shQuote(matrix.file)),
     header     = FALSE,
     skip       = 1L,
+    fill       = TRUE,
     colClasses = "character"
   )
 
@@ -205,7 +212,11 @@ vacant <- function(matrix.file,
   }
 
   # ---- 6. Aggregate ----
-  results.list <- Filter(Negate(is.null), results.list)
+  # mclapply returns error objects (not NULL) when a worker fails.
+  # Filter these out explicitly before rbindlist.
+  results.list <- Filter(function(x) {
+    !is.null(x) && !inherits(x, "error") && !inherits(x, "try-error") && is.data.frame(x)
+  }, results.list)
 
   if (length(results.list) == 0L) {
     warning("All genes failed or returned no results.")

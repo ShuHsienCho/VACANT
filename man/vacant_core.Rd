@@ -24,15 +24,15 @@ in the string is one sample's allele count (0/1/2).}
 \item{phenotype}{Data frame or numeric vector. Binary phenotype (0/1).
 If a data frame, must contain a column named \code{phenotype}.}
 
-\item{covariates}{Numeric matrix or data frame. Covariates (default NULL).}
+\item{covariates}{Numeric matrix or data frame. Covariates (default: NULL).}
 
-\item{test}{Character. \code{"uni"} (sequential univariate + ACAT) or
-\code{"multi"} (joint multivariate Firth; default).}
+\item{test}{Character. \code{"multi"} (joint multivariate Firth; default)
+or \code{"uni"} (sequential univariate + ACAT).}
 
-\item{acat.weight}{Character. ACAT weighting scheme: \code{"score"}
-(annotation-derived weights; default) or \code{"equal"}.}
+\item{acat.weight}{Character. ACAT weighting: \code{"score"} (default)
+or \code{"equal"}.}
 
-\item{size.threshold}{Integer. Minimum cluster size for K-means \link{default 10}.}
+\item{size.threshold}{Integer. Minimum cluster size for K-means (default: 10).}
 
 \item{transform.method}{Character. Score transformation applied before
 clustering: \code{"none"} (default), \code{"raw_squared"},
@@ -42,11 +42,11 @@ clustering: \code{"none"} (default), \code{"raw_squared"},
 A named list with three elements:
 \describe{
 \item{\code{results}}{Named numeric vector of p-values and effect estimates.}
-\item{\code{model}}{Pareto staircase prediction model object (for use with
+\item{\code{model}}{Pareto staircase prediction model (for use with
 \code{predict_vacant_cluster()}).}
 \item{\code{info}}{List of metadata (test type, weights, n variants, transform).}
 }
-Returns \code{NULL} if no carriers are found or the model fails.
+Returns NULL if no carriers are found or the model fails.
 }
 \description{
 Runs the VACANT statistical analysis on pre-processed R objects.

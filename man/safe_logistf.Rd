@@ -11,16 +11,17 @@ safe_logistf(formula, data, family = "binomial", control, max_retries = 5)
 
 \item{data}{A \code{data.frame} containing the variables in the model.}
 
-\item{family}{Character or function. Model family (default \code{"binomial"}).}
+\item{family}{Character or function. Model family (default: \code{"binomial"}).}
 
-\item{control}{A control object from \code{logistf.control()}.}
+\item{control}{A control object from \code{logistf::logistf.control()}.}
 
-\item{max_retries}{Integer. Maximum retry attempts (default 5).}
+\item{max_retries}{Integer. Maximum retry attempts (default: 5).}
 }
 \value{
 An object of class \code{logistf}.
 }
 \description{
-Wraps \code{logistf::logistf} to perform Firth-corrected logistic regression,
-automatically retrying if the Fisher information matrix becomes singular.
+Wraps \code{logistf::logistf} to perform Firth-corrected logistic
+regression, automatically retrying if the Fisher information matrix
+becomes singular.
 }

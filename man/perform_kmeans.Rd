@@ -15,6 +15,6 @@ perform_kmeans(data, mod)
 An object of class \code{\link[stats]{kmeans}}.
 }
 \description{
-Attempts k-means clustering on \code{data} using GMM-derived initial centers.
-If an error occurs, waits one second and retries recursively.
+Attempts k-means clustering on \code{data} using GMM-derived initial
+centers. If an error occurs, waits one second and retries recursively.
 }

@@ -24,7 +24,7 @@ follows XPAT 2.0: cols 1-\code{meta.ncols} are metadata, col
 (length = \code{meta.ncols} + n_samples). Used to recover sample IDs.}
 
 \item{ped.dt}{Data frame. Phenotype table with lowercase column names
-(\code{iid}, \code{aff} required). PLINK 1/2 coding (1 = control,
+(\code{iid} and \code{aff} required). PLINK 1/2 coding (1 = control,
 2 = case) is recoded to 0/1 automatically.}
 
 \item{cov.dt}{Data frame or NULL. Covariate table; col 1 = IID,
@@ -34,14 +34,14 @@ cols 2+ = numeric covariates (PCs, age, etc.).}
 coordinate metadata (matching the matrix), cols 9+ are scores.}
 
 \item{score.cols}{Character vector or NULL. Names to assign to score columns
-(col 9+ of \code{score.dt}). \code{NULL} uses a single column named
+(col 9+ of \code{score.dt}). NULL uses a single column named
 \code{"score"}.}
 
 \item{maf.threshold}{Numeric. Upper MAF bound; variants with MAF >=
-\code{maf.threshold} or MAF == 0 are excluded \link{default 0.01}.}
+\code{maf.threshold} or MAF == 0 are excluded (default: 0.01).}
 
 \item{meta.ncols}{Integer. Number of metadata columns before the genotype
-string column in the XPAT matrix \link{default 11}.}
+string column in the XPAT matrix (default: 11).}
 }
 \value{
 A named list. On success: \code{status = "success"} plus
