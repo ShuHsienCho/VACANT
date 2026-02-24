@@ -333,28 +333,37 @@ internal_prepare_inputs <- function(sub.matrix,
 #' @return Character. Path to the .bgz file.
 #' @export
 ensure_bgz_index <- function(gz.file, gene.col = 7L) {
-
   bgz.file <- sub("\\.gz$", ".bgz", gz.file)
   tbi.file <- paste0(bgz.file, ".tbi")
 
   if (!file.exists(bgz.file) || !file.exists(tbi.file)) {
-    message(sprintf(
-      "[%s] Building bgzip+tabix index (one-time setup, may take a few minutes)...",
-      format(Sys.time(), "%H:%M:%S")
-    ))
+    # Resolve bgzip/tabix from PATH or common locations
+    bgzip.bin <- Sys.which("bgzip")
+    tabix.bin <- Sys.which("tabix")
 
-    ret <- system(paste("zcat", shQuote(gz.file), "| bgzip >", shQuote(bgz.file)))
-    if (ret != 0L) stop("bgzip conversion failed for: ", gz.file)
+    # Fallback: miniforge3 (common on MD Anderson HPC)
+    if (!nzchar(bgzip.bin)) {
+      bgzip.bin <- path.expand("~/miniforge3/bin/bgzip")
+    }
+    if (!nzchar(tabix.bin)) {
+      tabix.bin <- path.expand("~/miniforge3/bin/tabix")
+    }
 
-    ret <- system(paste(
-      "tabix -s", gene.col, "-b 2 -e 3 -S 1", shQuote(bgz.file)
-    ))
-    if (ret != 0L) stop("tabix indexing failed for: ", bgz.file)
+    if (!file.exists(bgzip.bin)) stop("bgzip not found: ", bgzip.bin)
+    if (!file.exists(tabix.bin)) stop("tabix not found: ", tabix.bin)
 
-    message(sprintf("[%s] Index ready: %s", format(Sys.time(), "%H:%M:%S"), bgz.file))
+    message(sprintf("[%s] Building bgzip+tabix index (one-time setup, may take a few minutes)...",
+                    format(Sys.time(), "%H:%M:%S")))
+
+    ret1 <- system(paste("zcat", shQuote(gz.file), "|", bgzip.bin, ">", shQuote(bgz.file)))
+    if (ret1 != 0L) stop("bgzip conversion failed (exit code ", ret1, ")")
+
+    ret2 <- system(paste(tabix.bin, "-s", gene.col, "-b 2 -e 3 -S 1", shQuote(bgz.file)))
+    if (ret2 != 0L) stop("tabix indexing failed (exit code ", ret2, ")")
+
+    message(sprintf("[%s] Index ready.", format(Sys.time(), "%H:%M:%S")))
   } else {
-    message(sprintf("[%s] Using existing bgz index: %s",
-                    format(Sys.time(), "%H:%M:%S"), bgz.file))
+    message(sprintf("[%s] Using existing bgz index.", format(Sys.time(), "%H:%M:%S")))
   }
 
   bgz.file
