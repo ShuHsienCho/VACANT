@@ -5,20 +5,20 @@
 \title{Cluster annotation scores with Multi-Layer Pareto Staircase Boundaries}
 \usage{
 cluster_score(
-  score.vals,
-  geno.maf,
+  score,
+  geno,
   size.threshold = 10,
-  transform.method = c("log", "none")
+  transform.method = c("none", "raw_squared", "phred_to_chisq", "log", "sigmoid")
 )
 }
 \arguments{
-\item{score.vals}{Numeric matrix or vector. Rows are variants, columns are score types.}
+\item{score}{Numeric matrix or vector. Rows are variants, columns are score types.}
 
-\item{geno.maf}{Character vector. Genotype strings for allele count weighting.}
+\item{geno}{Character vector. Genotype strings for allele count weighting.}
 
 \item{size.threshold}{Integer. Minimum cluster size threshold (default 10).}
 
-\item{transform.method}{Character. "log" (default, applies log1p) or "none".}
+\item{transform.method}{Character. "none", "raw_squared", "phred_to_chisq", or "log".}
 }
 \value{
 A list containing:

@@ -2,21 +2,110 @@
 % Please edit documentation in R/vacant.R
 \name{vacant}
 \alias{vacant}
-\title{Run the VACANT Analysis (Returning Model Object)}
+\title{Run VACANT Rare Variant Association Analysis}
 \usage{
 vacant(
-  geno.maf,
-  score.vector,
-  phenotype,
-  covariates = NULL,
-  test = c("uni", "multi"),
+  matrix.file,
+  ped.file,
+  score.file,
+  cov.file = NULL,
+  score.cols = NULL,
+  maf.threshold = 0.01,
+  size.threshold = 10L,
+  transform.method = c("none", "raw_squared", "phred_to_chisq", "log", "sigmoid"),
+  test = c("multi", "uni"),
   acat.weight = c("score", "equal"),
-  size.threshold = 10
+  gene.col = 7L,
+  meta.ncols = 11L,
+  n.cores = 1L
 )
 }
+\arguments{
+\item{matrix.file}{Character. Path to gzipped XPAT 2.0 matrix file (.gz).
+May contain one or multiple genes.}
+
+\item{ped.file}{Character. Path to PED file. Expected header:
+\code{#fid iid pid mid sex aff platform ignore} (8 cols). Phenotype
+column (\code{aff}) uses PLINK 1/2 coding (1 = control, 2 = case).}
+
+\item{score.file}{Character. Path to annotation score file (no header).
+Cols 1-8 must be genomic coordinate metadata matching the matrix;
+cols 9+ are numeric scores.}
+
+\item{cov.file}{Character or NULL. Path to covariate file (no header).
+Col 1 = IID, cols 2+ = numeric covariates (PCs, age, etc.)
+\link{default NULL}.}
+
+\item{score.cols}{Character vector or NULL. Names to assign to score
+columns (col 9+ of \code{score.file}). \code{NULL} uses a single
+column named \code{"score"}.}
+
+\item{maf.threshold}{Numeric. Upper MAF bound for rare variant filtering
+\link{default 0.01}.}
+
+\item{size.threshold}{Integer. Minimum cluster size for K-means \link{default 10}.}
+
+\item{transform.method}{Character. Score transformation applied before
+clustering: \code{"none"} (default), \code{"raw_squared"},
+\code{"phred_to_chisq"}, \code{"log"}, or \code{"sigmoid"}.}
+
+\item{test}{Character. \code{"multi"} (joint multivariate Firth; default)
+or \code{"uni"} (sequential univariate + ACAT).}
+
+\item{acat.weight}{Character. ACAT weighting: \code{"score"} (default)
+or \code{"equal"}.}
+
+\item{gene.col}{Integer. Column index of the gene name field in the matrix
+\link{default 7, standard XPAT 2.0}.}
+
+\item{meta.ncols}{Integer. Number of metadata columns before the genotype
+string column \link{default 11, standard XPAT 2.0}.}
+
+\item{n.cores}{Integer. Number of CPU cores for parallel gene processing.
+Use \code{n.cores = 1} (default) for single-gene matrices or sequential
+execution. Set \code{n.cores > 1} for chromosome-level matrices with
+many genes (Linux/macOS only; uses \code{parallel::mclapply}).}
+}
 \value{
-A list containing analysis results ($results) and the prediction model ($model).
+A \code{data.table} with one row per gene containing p-values,
+effect estimates, cluster statistics, and metadata. Returns \code{NULL}
+if all genes fail.
+Each row also contains an \code{rds.path} attribute if results are saved
+to disk via \code{run_vacant_job.R}.
 }
 \description{
-Run the VACANT Analysis (Returning Model Object)
+Main entry point for the VACANT package. Accepts file paths to an XPAT 2.0
+genotype matrix, phenotype (PED), annotation scores, and optionally
+covariates. Automatically detects all genes in the matrix, prepares inputs,
+and runs the full VACANT pipeline (clustering + Firth association test) for
+each gene. Supports parallel execution for multi-gene matrices.
+}
+\examples{
+\dontrun{
+# Single-gene matrix (typical for HPC simulation jobs)
+result <- vacant(
+  matrix.file      = "XPAT.region.ATM_QC.matrix.gz",
+  ped.file         = "UKB.BREAST.unrelated.ped",
+  score.file       = "casm_avg_spliceAI.txt",
+  cov.file         = "UKB.BREAST.unrelated.pca",
+  score.cols       = c("CADD", "aPC"),
+  maf.threshold    = 0.005,
+  transform.method = "none",
+  test             = "multi"
+)
+
+# Chromosome-level matrix (parallel execution)
+result <- vacant(
+  matrix.file = "XPAT.chr17.matrix.gz",
+  ped.file    = "UKB.BREAST.unrelated.ped",
+  score.file  = "casm_avg_spliceAI.txt",
+  cov.file    = "UKB.BREAST.unrelated.pca",
+  score.cols  = c("CADD", "aPC"),
+  n.cores     = 8
+)
+}
+
+}
+\seealso{
+\code{\link{vacant_core}}, \code{\link{predict_vacant_cluster}}
 }

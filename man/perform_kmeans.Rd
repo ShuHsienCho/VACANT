@@ -2,19 +2,19 @@
 % Please edit documentation in R/vacant_helpers.R
 \name{perform_kmeans}
 \alias{perform_kmeans}
-\title{Perform k-means clustering with retry on error}
+\title{Perform K-means Clustering with Retry}
 \usage{
 perform_kmeans(data, mod)
 }
 \arguments{
 \item{data}{Numeric matrix or data frame.}
 
-\item{mod}{A model-like object containing a \code{classification} vector.}
+\item{mod}{A Mclust model object containing a \code{classification} vector.}
 }
 \value{
 An object of class \code{\link[stats]{kmeans}}.
 }
 \description{
-Attempts k-means clustering on \code{data}. If an error occurs,
-prints the error message, waits one second, and retries recursively.
+Attempts k-means clustering on \code{data} using GMM-derived initial centers.
+If an error occurs, waits one second and retries recursively.
 }

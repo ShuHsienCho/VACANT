@@ -2,18 +2,20 @@
 % Please edit documentation in R/vacant_helpers.R
 \name{extract_sub}
 \alias{extract_sub}
-\title{Extract a single character from a genotype string}
+\title{Extract Per-Sample Allele from Genotype Strings}
 \usage{
 extract_sub(x, idx)
 }
 \arguments{
 \item{x}{Character vector of genotype strings.}
 
-\item{idx}{Integer. Position of allele to extract.}
+\item{idx}{Integer vector. Sample positions to extract.}
 }
 \value{
-Character scalar of the extracted allele.
+Character scalar of the extracted alleles (one character per sample).
 }
 \description{
-Given a genotype string vector and an index, returns the allele at that position.
+Given a vector of XPAT-format genotype strings (one per variant) and a
+vector of sample positions, extracts a single concatenated string of
+allele counts for those samples.
 }

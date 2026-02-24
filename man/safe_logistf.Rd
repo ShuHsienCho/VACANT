@@ -2,7 +2,7 @@
 % Please edit documentation in R/vacant_helpers.R
 \name{safe_logistf}
 \alias{safe_logistf}
-\title{Safe Firth Logistic Regression with Retry on Singular Fisher Information}
+\title{Safe Firth Logistic Regression with Retry}
 \usage{
 safe_logistf(formula, data, family = "binomial", control, max_retries = 5)
 }
@@ -11,11 +11,11 @@ safe_logistf(formula, data, family = "binomial", control, max_retries = 5)
 
 \item{data}{A \code{data.frame} containing the variables in the model.}
 
-\item{family}{Character or function. The model family (default "binomial").}
+\item{family}{Character or function. Model family (default \code{"binomial"}).}
 
-\item{control}{A control object created by \code{logistf.control()}.}
+\item{control}{A control object from \code{logistf.control()}.}
 
-\item{max_retries}{Integer. Maximum number of retry attempts (default 5).}
+\item{max_retries}{Integer. Maximum retry attempts (default 5).}
 }
 \value{
 An object of class \code{logistf}.

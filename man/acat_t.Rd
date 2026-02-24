@@ -2,12 +2,12 @@
 % Please edit documentation in R/vacant_helpers.R
 \name{acat_t}
 \alias{acat_t}
-\title{Calculate ACAT test statistic}
+\title{Calculate ACAT Test Statistic}
 \usage{
 acat_t(p, w)
 }
 \arguments{
-\item{p}{Numeric vector of p-values (each in (0,1)).}
+\item{p}{Numeric vector of p-values (each in (0, 1)).}
 
 \item{w}{Numeric vector of positive weights of the same length as \code{p}.}
 }
@@ -15,6 +15,6 @@ acat_t(p, w)
 Numeric scalar: the ACAT test statistic.
 }
 \description{
-Given a vector of p-values and corresponding weights, computes the aggregated
-Cauchy test statistic.
+Computes the aggregated Cauchy association test statistic from a vector
+of p-values and corresponding weights.
 }

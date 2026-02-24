@@ -1,148 +1,163 @@
 #!/usr/bin/env Rscript
-
-# 1. Check Package
-if (!requireNamespace("VACANT", quietly = TRUE)) {
-  stop("Error: 'VACANT' package not installed.", call. = FALSE)
-}
+# ==============================================================================
+# vacant (inst/bin/vacant)
+# CLI entry point for the VACANT package.
+# Usage: vacant --matrix "..." --ped "..." --score "..." --output "..."
+# ==============================================================================
 
 suppressPackageStartupMessages({
   library(optparse)
   library(data.table)
-  library(VACANT)
 })
 
-# 2. Define Arguments
-option_list <- list(
-  # --- Common Inputs ---
-  make_option(c("-i", "--input"), type="character", help="[Required] Input file (CSV/TXT). For Analysis: must contain Genotypes & Scores. For Prediction: contains Scores.", metavar="FILE"),
-  make_option(c("--score_cols"), type="character", help="[Required] Comma-separated score column names (e.g., 'CADD,REVEL').", metavar="STR"),
-  make_option(c("-o", "--output"), type="character", help="[Required] Output filename.", metavar="FILE"),
-  
-  # --- Analysis Mode Arguments ---
-  make_option(c("--geno_col"), type="character", default="genotype", help="[Analysis] Genotype string column name [default: genotype].", metavar="STR"),
-  make_option(c("--pheno"), type="character", help="[Analysis] Phenotype file path.", metavar="FILE"),
-  make_option(c("--cov"), type="character", default=NULL, help="[Analysis] Covariate file path [Optional].", metavar="FILE"),
-  make_option(c("--test"), type="character", default="multi", help="[Analysis] Test type: 'multi' or 'uni'."),
-  make_option(c("--weight"), type="character", default="score", help="[Analysis] Weight: 'score' or 'equal'."),
-  make_option(c("--size_threshold"), type="integer", default=10, help="[Analysis] Min cluster size [default: 10]."),
-  
-  # --- Prediction Mode Arguments ---
-  make_option(c("--model"), type="character", default=NULL, help="[Prediction Only] Path to an existing .rds model file. If provided, runs PREDICTION mode.", metavar="FILE")
+# ---- 1. Define CLI Arguments ----
+option.list <- list(
+  make_option("--matrix",
+              type = "character",
+              help = "[Required] Path to gzipped XPAT 2.0 matrix file (.gz)."),
+  make_option("--ped",
+              type = "character",
+              help = "[Required] Path to PED file (header: #fid iid pid mid sex aff ...)."),
+  make_option("--score",
+              type = "character",
+              help = "[Required] Path to annotation score file (no header, cols 1-8 = metadata, col 9+ = scores)."),
+  make_option("--output",
+              type = "character",
+              help = "[Required] Output CSV path. An .rds model file is also saved alongside."),
+  make_option("--covariates",
+              type    = "character",
+              default = NULL,
+              help    = "[Optional] Path to covariate/PCA file (no header, col 1 = IID)."),
+  make_option("--score_cols",
+              type    = "character",
+              default = NULL,
+              help    = "[Optional] Comma-separated score column names matching col 9+ of score file (e.g. CADD,aPC)."),
+  make_option("--test",
+              type    = "character",
+              default = "multi",
+              help    = "Statistical test: multi (default) or uni."),
+  make_option("--weight",
+              type    = "character",
+              default = "score",
+              help    = "ACAT weighting: score (default) or equal."),
+  make_option("--maf",
+              type    = "numeric",
+              default = 0.01,
+              help    = "MAF threshold for rare variant filtering (default: 0.01)."),
+  make_option("--size_threshold",
+              type    = "integer",
+              default = 10L,
+              help    = "Minimum cluster size for K-means (default: 10)."),
+  make_option("--transform",
+              type    = "character",
+              default = "none",
+              help    = "Score transformation: none (default), raw_squared, phred_to_chisq, log, sigmoid."),
+  make_option("--gene_col",
+              type    = "integer",
+              default = 7L,
+              help    = "Column index of gene name in matrix (default: 7)."),
+  make_option("--meta_ncols",
+              type    = "integer",
+              default = 11L,
+              help    = "Number of metadata columns before genotype string (default: 11)."),
+  make_option("--n_cores",
+              type    = "integer",
+              default = 1L,
+              help    = "CPU cores for parallel gene processing (default: 1). Set > 1 for chromosome-level matrices.")
 )
 
-parser <- OptionParser(usage = "Usage:\n  Analyze: vacant -i data.csv --pheno pheno.ped -o result\n  Predict: vacant -i new_vars.csv --model result.rds -o pred.csv", option_list=option_list)
+parser <- OptionParser(
+  usage       = "vacant [options]",
+  description = paste(
+    "\nVACANT: Variant Annotation Clustering AssociatioN Test",
+    "Rare variant association testing using multi-dimensional annotation scores.",
+    sep = "\n"
+  ),
+  option_list = option.list
+)
+
 args <- parse_args(parser)
 
-# 3. Main Logic
-if (is.null(args$input) || is.null(args$output) || is.null(args$score_cols)) {
+# ---- 2. Validate Required Arguments ----
+required <- c("matrix", "ped", "score", "output")
+missing.args <- required[sapply(required, function(x) is.null(args[[x]]))]
+if (length(missing.args) > 0) {
+  cat("Error: Missing required argument(s):", paste0("--", missing.args, collapse = ", "), "\n\n")
   print_help(parser)
-  stop("Error: Missing basic arguments (-i, -o, --score_cols).", call.=FALSE)
+  quit(save = "no", status = 1)
 }
 
-# Helper to read scores
-read_scores <- function(file, cols_str) {
-  df <- fread(file, header = TRUE, data.table = FALSE)
-  cols <- trimws(strsplit(cols_str, ",")[[1]])
-  missing <- setdiff(cols, colnames(df))
-  if(length(missing) > 0) stop(paste("Error: Missing score columns:", paste(missing, collapse=", ")))
-  return(list(mat = as.matrix(df[, cols, drop=FALSE]), df = df)) # Return raw df to keep IDs if needed
+# ---- 3. Load VACANT Package ----
+if (!requireNamespace("VACANT", quietly = TRUE)) {
+  stop(paste(
+    "The VACANT package is not installed.",
+    "Install with: remotes::install_github('ShuHsienCho/VACANT')"
+  ))
+}
+library(VACANT, character.only = TRUE)
+
+# ---- 4. Parse Score Columns ----
+score.cols.vec <- NULL
+if (!is.null(args$score_cols) && nzchar(args$score_cols)) {
+  score.cols.vec <- trimws(unlist(strsplit(args$score_cols, ",")))
 }
 
-# ==========================================
-# MODE 1: PREDICTION (If --model is present)
-# ==========================================
-if (!is.null(args$model)) {
-  message(sprintf(">> [VACANT] Mode: PREDICTION"))
-  message(sprintf("   Loading model: %s", args$model))
-  
-  if (!file.exists(args$model)) stop("Model file not found.")
-  
-  # 1. Load Model
-  model_obj <- readRDS(args$model)
-  # Handle both full object (list with $model) or just the model part
-  model_core <- if("model" %in% names(model_obj)) model_obj$model else model_obj
-  
-  # 2. Read New Scores
-  message(sprintf("   Reading new variants: %s", args$input))
-  input_data <- read_scores(args$input, args$score_cols)
-  score_mat <- input_data$mat
-  
-  # 3. Run Prediction
-  message("   Predicting risk clusters...")
-  # Note: The function handles log-transform automatically based on model params
-  pred_clusters <- VACANT::predict_vacant_cluster(model_core, score_mat)
-  
-  # 4. Save Output
-  out_df <- input_data$df # Start with original input
-  out_df$VACANT_Cluster <- pred_clusters
-  
-  fwrite(out_df, args$output)
-  message(sprintf(">> [Success] Predictions saved to: %s", args$output))
-  
+# ---- 5. Run VACANT ----
+message(sprintf(
+  "[vacant] test=%s | transform=%s | maf=%.4f | size_threshold=%d | n_cores=%d",
+  args$test, args$transform, args$maf, args$size_threshold, args$n_cores
+))
+
+result.dt <- tryCatch(
+  vacant(
+    matrix.file      = args$matrix,
+    ped.file         = args$ped,
+    score.file       = args$score,
+    cov.file         = args$covariates,
+    score.cols       = score.cols.vec,
+    maf.threshold    = args$maf,
+    size.threshold   = args$size_threshold,
+    transform.method = args$transform,
+    test             = args$test,
+    acat.weight      = args$weight,
+    gene.col         = args$gene_col,
+    meta.ncols       = args$meta_ncols,
+    n.cores          = args$n_cores
+  ),
+  error = function(e) {
+    stop(sprintf("[vacant] Error: %s", e$message))
+  }
+)
+
+# ---- 6. Save Outputs ----
+if (is.null(result.dt) || nrow(result.dt) == 0L) {
+  message("[vacant] No results returned. No output saved.")
   quit(save = "no", status = 0)
 }
 
-# ==========================================
-# MODE 2: ANALYSIS (Standard VACANT Pipeline)
-# ==========================================
-message(sprintf(">> [VACANT] Mode: ANALYSIS (Training & Testing)"))
+# Save CSV (drop hidden .model column)
+csv.dt <- result.dt[, !colnames(result.dt) %in% ".model", with = FALSE]
+data.table::fwrite(csv.dt, file = args$output)
+message(sprintf("[vacant] Results saved: %s", args$output))
 
-if (is.null(args$pheno)) stop("Error: Analysis mode requires --pheno.")
-
-# --- A. Read Inputs ---
-message("   Reading inputs...")
-
-# 1. Scores & Genotypes (From same file)
-input_data <- read_scores(args$input, args$score_cols)
-score_mat <- input_data$mat
-raw_df <- input_data$df
-
-if (!args$geno_col %in% colnames(raw_df)) stop(sprintf("Genotype column '%s' not found.", args$geno_col))
-geno_vec <- as.character(raw_df[[args$geno_col]])
-
-# 2. Phenotypes
-pheno_raw <- fread(args$pheno, header = TRUE, data.table = FALSE)
-# Heuristic for column name
-p_col <- colnames(pheno_raw)[match(c("phenotype", "aff"), tolower(colnames(pheno_raw)))[1]]
-if(is.na(p_col)) p_col <- colnames(pheno_raw)[min(6, ncol(pheno_raw))] # Fallback
-pheno_vec <- pheno_raw[[p_col]]
-if(max(pheno_vec, na.rm=TRUE) > 1) pheno_vec <- pheno_vec - 1
-pheno_df <- data.frame(phenotype = pheno_vec)
-
-# 3. Covariates
-cov_df <- NULL
-if (!is.null(args$cov)) {
-  cov_raw <- fread(args$cov, header = TRUE, data.table = FALSE)
-  cov_df <- if(is.numeric(cov_raw[[1]])) cov_raw else cov_raw[,-1, drop=FALSE]
+# Save RDS (one per gene, contains Pareto model for predict_vacant_cluster())
+if (".model" %in% colnames(result.dt)) {
+  for (i in seq_len(nrow(result.dt))) {
+    gene.name <- result.dt[["gene"]][i]
+    rds.path  <- sub("\\.csv$", sprintf("_%s.rds", gene.name), args$output)
+    if (rds.path == args$output) {
+      rds.path <- sprintf("%s_%s.rds", args$output, gene.name)
+    }
+    saveRDS(
+      list(
+        results = as.list(csv.dt[i, ]),
+        model   = result.dt[[".model"]][[i]],
+        gene    = gene.name
+      ),
+      file = rds.path
+    )
+    message(sprintf("[vacant] Model saved:   %s", rds.path))
+  }
 }
 
-# --- B. Validation ---
-if (nrow(score_mat) != nrow(pheno_df)) stop("Sample size mismatch (Scores vs Pheno).")
-
-# --- C. Run ---
-message(sprintf("   Running VACANT (%s)...", args$test))
-res_obj <- VACANT::vacant(
-  geno.maf = geno_vec,
-  score.vector = score_mat,
-  phenotype = pheno_df,
-  covariates = cov_df,
-  test = args$test,
-  acat.weight = args$weight,
-  size.threshold = args$size_threshold
-)
-
-# --- D. Output ---
-if (!is.null(res_obj)) {
-  # Save Model (RDS)
-  rds_path <- sub("\\.csv$", ".rds", args$output)
-  if(rds_path == args$output) rds_path <- paste0(args$output, ".rds")
-  saveRDS(res_obj, rds_path)
-  message(sprintf("   Model saved: %s", rds_path))
-  
-  # Save Stats (CSV)
-  out_df <- as.data.frame(t(res_obj$results))
-  fwrite(out_df, args$output)
-  message(sprintf(">> [Success] Statistics saved: %s", args$output))
-} else {
-  message(">> Analysis returned NULL.")
-}
+message("[vacant] Done.")

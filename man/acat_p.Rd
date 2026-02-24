@@ -2,12 +2,12 @@
 % Please edit documentation in R/vacant_helpers.R
 \name{acat_p}
 \alias{acat_p}
-\title{Convert ACAT statistic back to a p-value}
+\title{Convert ACAT Statistic to a P-value}
 \usage{
 acat_p(t, w)
 }
 \arguments{
-\item{t}{Numeric scalar: ACAT test statistic.}
+\item{t}{Numeric scalar: ACAT test statistic from \code{acat_t()}.}
 
 \item{w}{Numeric vector of weights used to compute \code{t}.}
 }
