@@ -2,114 +2,187 @@
 # ==============================================================================
 # vacant (inst/bin/vacant)
 # CLI entry point for the VACANT package.
-# Usage: vacant --matrix "..." --ped "..." --score "..." --output "..."
+#
+# Two modes:
+#   Analysis:   vacant --matrix "..." --ped "..." --score "..." --output "..."
+#   Prediction: vacant --input "..." --model "..." --score_cols "..." --output "..."
 # ==============================================================================
+
+if (!requireNamespace("VACANT", quietly = TRUE)) {
+  stop(paste(
+    "The VACANT package is not installed.",
+    "Install with: remotes::install_github('ShuHsienCho/VACANT')"
+  ), call. = FALSE)
+}
 
 suppressPackageStartupMessages({
   library(optparse)
   library(data.table)
+  library(VACANT)
 })
 
 # ---- 1. Define CLI Arguments ----
 option.list <- list(
+
+  # --- Analysis Mode ---
   make_option("--matrix",
-              type = "character",
-              help = "[Required] Path to gzipped XPAT 2.0 matrix file (.gz)."),
+              type = "character", default = NULL,
+              help = "[Analysis] Path to gzipped XPAT 2.0 matrix file (.gz).",
+              metavar = "FILE"),
   make_option("--ped",
-              type = "character",
-              help = "[Required] Path to PED file (header: #fid iid pid mid sex aff ...)."),
+              type = "character", default = NULL,
+              help = "[Analysis] Path to PED file (header: #fid iid pid mid sex aff ...).",
+              metavar = "FILE"),
   make_option("--score",
-              type = "character",
-              help = "[Required] Path to annotation score file (no header, cols 1-8 = metadata, col 9+ = scores)."),
-  make_option("--output",
-              type = "character",
-              help = "[Required] Output CSV path. An .rds model file is also saved alongside."),
+              type = "character", default = NULL,
+              help = "[Analysis] Path to annotation score file (no header; cols 1-8 = metadata, col 9+ = scores).",
+              metavar = "FILE"),
   make_option("--covariates",
-              type    = "character",
-              default = NULL,
-              help    = "[Optional] Path to covariate/PCA file (no header, col 1 = IID)."),
+              type = "character", default = NULL,
+              help = "[Analysis] Path to covariate/PCA file (no header, col 1 = IID). [optional]",
+              metavar = "FILE"),
   make_option("--score_cols",
-              type    = "character",
-              default = NULL,
-              help    = "[Optional] Comma-separated score column names matching col 9+ of score file (e.g. CADD,aPC)."),
+              type = "character", default = NULL,
+              help = "[Analysis/Prediction] Comma-separated score column names (e.g. CADD,aPC).",
+              metavar = "STR"),
   make_option("--test",
-              type    = "character",
-              default = "multi",
-              help    = "Statistical test: multi (default) or uni."),
+              type = "character", default = "multi",
+              help = "[Analysis] Statistical test: multi (default) or uni."),
   make_option("--weight",
-              type    = "character",
-              default = "score",
-              help    = "ACAT weighting: score (default) or equal."),
+              type = "character", default = "score",
+              help = "[Analysis] ACAT weighting: score (default) or equal."),
   make_option("--maf",
-              type    = "numeric",
-              default = 0.01,
-              help    = "MAF threshold for rare variant filtering (default: 0.01)."),
+              type = "numeric", default = 0.01,
+              help = "[Analysis] MAF threshold (default: 0.01)."),
   make_option("--size_threshold",
-              type    = "integer",
-              default = 10L,
-              help    = "Minimum cluster size for K-means (default: 10)."),
+              type = "integer", default = 10L,
+              help = "[Analysis] Minimum cluster size for K-means (default: 10)."),
   make_option("--transform",
-              type    = "character",
-              default = "none",
-              help    = "Score transformation: none (default), raw_squared, phred_to_chisq, log, sigmoid."),
+              type = "character", default = "none",
+              help = "[Analysis] Score transformation: none (default), raw_squared, phred_to_chisq, log, sigmoid."),
   make_option("--gene_col",
-              type    = "integer",
-              default = 7L,
-              help    = "Column index of gene name in matrix (default: 7)."),
+              type = "integer", default = 7L,
+              help = "[Analysis] Column index of gene name in matrix (default: 7)."),
   make_option("--meta_ncols",
-              type    = "integer",
-              default = 11L,
-              help    = "Number of metadata columns before genotype string (default: 11)."),
+              type = "integer", default = 11L,
+              help = "[Analysis] Number of metadata columns before genotype string (default: 11)."),
   make_option("--n_cores",
-              type    = "integer",
-              default = 1L,
-              help    = "CPU cores for parallel gene processing (default: 1). Set > 1 for chromosome-level matrices.")
+              type = "integer", default = 1L,
+              help = "[Analysis] CPU cores for parallel gene processing (default: 1)."),
+
+  # --- Prediction Mode ---
+  make_option("--model",
+              type = "character", default = NULL,
+              help = "[Prediction] Path to a trained .rds model file. If provided, runs PREDICTION mode.",
+              metavar = "FILE"),
+  make_option("--input",
+              type = "character", default = NULL,
+              help = "[Prediction] Path to CSV/TXT file containing raw scores for new variants.",
+              metavar = "FILE"),
+
+  # --- Common ---
+  make_option("--output",
+              type = "character", default = NULL,
+              help = "[Required] Output file path.",
+              metavar = "FILE")
 )
 
 parser <- OptionParser(
-  usage       = "vacant [options]",
-  description = paste(
-    "\nVACANT: Variant Annotation Clustering AssociatioN Test",
-    "Rare variant association testing using multi-dimensional annotation scores.",
-    sep = "\n"
+  usage = paste(
+    "vacant [options]",
+    "  Analysis:   vacant --matrix FILE --ped FILE --score FILE --output FILE",
+    "  Prediction: vacant --model FILE --input FILE --score_cols STR --output FILE",
+    sep = "\n  "
   ),
-  option_list = option.list
+  description = "\nVACANT: Variant Annotation Clustering AssociatioN Test",
+  option_list  = option.list
 )
 
 args <- parse_args(parser)
 
 # ---- 2. Validate Required Arguments ----
-required <- c("matrix", "ped", "score", "output")
-missing.args <- required[sapply(required, function(x) is.null(args[[x]]))]
-if (length(missing.args) > 0) {
-  cat("Error: Missing required argument(s):", paste0("--", missing.args, collapse = ", "), "\n\n")
+if (is.null(args$output)) {
+  cat("Error: --output is required.\n\n")
   print_help(parser)
   quit(save = "no", status = 1)
 }
 
-# ---- 3. Load VACANT Package ----
-if (!requireNamespace("VACANT", quietly = TRUE)) {
-  stop(paste(
-    "The VACANT package is not installed.",
-    "Install with: remotes::install_github('ShuHsienCho/VACANT')"
-  ))
-}
-library(VACANT, character.only = TRUE)
+# ---- 3. Mode Detection ----
+is.prediction <- !is.null(args$model)
 
-# ---- 4. Parse Score Columns ----
+# ==============================================================================
+# MODE: PREDICTION
+# ==============================================================================
+if (is.prediction) {
+
+  message("[vacant] Mode: PREDICTION")
+
+  if (is.null(args$input)) {
+    stop("Prediction mode requires --input (path to new variant scores).", call. = FALSE)
+  }
+  if (is.null(args$score_cols)) {
+    stop("Prediction mode requires --score_cols.", call. = FALSE)
+  }
+  if (!file.exists(args$model)) {
+    stop("Model file not found: ", args$model, call. = FALSE)
+  }
+  if (!file.exists(args$input)) {
+    stop("Input file not found: ", args$input, call. = FALSE)
+  }
+
+  # Load model
+  message(sprintf("[vacant] Loading model: %s", args$model))
+  model.obj  <- readRDS(args$model)
+  model.core <- if ("model" %in% names(model.obj)) model.obj$model else model.obj
+
+  # Read new variant scores
+  message(sprintf("[vacant] Reading new variants: %s", args$input))
+  input.dt  <- data.table::fread(args$input, header = TRUE, data.table = FALSE)
+  cols      <- trimws(unlist(strsplit(args$score_cols, ",")))
+  missing.c <- setdiff(cols, colnames(input.dt))
+  if (length(missing.c) > 0) {
+    stop("Missing score columns in input file: ", paste(missing.c, collapse = ", "),
+         call. = FALSE)
+  }
+  score.mat <- as.matrix(input.dt[, cols, drop = FALSE])
+
+  # Predict
+  message("[vacant] Predicting risk clusters...")
+  pred.clusters <- VACANT::predict_vacant_cluster(model.core, score.mat)
+
+  # Save
+  input.dt$VACANT_Cluster <- pred.clusters
+  data.table::fwrite(input.dt, args$output)
+  message(sprintf("[vacant] Predictions saved: %s", args$output))
+  quit(save = "no", status = 0)
+}
+
+# ==============================================================================
+# MODE: ANALYSIS
+# ==============================================================================
+message("[vacant] Mode: ANALYSIS")
+
+required.analysis <- c("matrix", "ped", "score")
+missing.args <- required.analysis[sapply(required.analysis, function(x) is.null(args[[x]]))]
+if (length(missing.args) > 0) {
+  cat("Error: Analysis mode requires:", paste0("--", missing.args, collapse = ", "), "\n\n")
+  print_help(parser)
+  quit(save = "no", status = 1)
+}
+
+# Parse score columns
 score.cols.vec <- NULL
 if (!is.null(args$score_cols) && nzchar(args$score_cols)) {
   score.cols.vec <- trimws(unlist(strsplit(args$score_cols, ",")))
 }
 
-# ---- 5. Run VACANT ----
 message(sprintf(
   "[vacant] test=%s | transform=%s | maf=%.4f | size_threshold=%d | n_cores=%d",
   args$test, args$transform, args$maf, args$size_threshold, args$n_cores
 ))
 
 result.dt <- tryCatch(
-  vacant(
+  VACANT::vacant(
     matrix.file      = args$matrix,
     ped.file         = args$ped,
     score.file       = args$score,
@@ -125,22 +198,22 @@ result.dt <- tryCatch(
     n.cores          = args$n_cores
   ),
   error = function(e) {
-    stop(sprintf("[vacant] Error: %s", e$message))
+    stop(sprintf("[vacant] Error in vacant(): %s", e$message), call. = FALSE)
   }
 )
 
-# ---- 6. Save Outputs ----
+# Save outputs
 if (is.null(result.dt) || nrow(result.dt) == 0L) {
   message("[vacant] No results returned. No output saved.")
   quit(save = "no", status = 0)
 }
 
-# Save CSV (drop hidden .model column)
+# CSV (drop hidden .model column)
 csv.dt <- result.dt[, !colnames(result.dt) %in% ".model", with = FALSE]
 data.table::fwrite(csv.dt, file = args$output)
 message(sprintf("[vacant] Results saved: %s", args$output))
 
-# Save RDS (one per gene, contains Pareto model for predict_vacant_cluster())
+# RDS (one per gene)
 if (".model" %in% colnames(result.dt)) {
   for (i in seq_len(nrow(result.dt))) {
     gene.name <- result.dt[["gene"]][i]
@@ -156,7 +229,7 @@ if (".model" %in% colnames(result.dt)) {
       ),
       file = rds.path
     )
-    message(sprintf("[vacant] Model saved:   %s", rds.path))
+    message(sprintf("[vacant] Model saved: %s", rds.path))
   }
 }
 
