@@ -13,7 +13,9 @@
 #'   \item{ac.weights}{Numeric vector of scalar weights (Un-scaled sum) for ACAT.}
 #'   \item{cluster.sizes}{Integer vector of cluster sizes.}
 #'   \item{prediction.model}{List containing \code{anchors.list} for clinical prediction.}
-#' @import mclust stats stringi
+#' @importFrom mclust Mclust mclustBIC mclustBICupdate hcRandomPairs
+#' @importFrom stats kmeans sd scale
+#' @importFrom stringi stri_extract_all_regex
 #' @export
 cluster_score <- function(score,
                           geno,
@@ -47,23 +49,34 @@ cluster_score <- function(score,
 
   } else if (transform.method == "phred_to_chisq") {
     for (i in seq_len(ncol(score.mat))) {
-      # 確保沒有負數 (PHRED 理論上 >= 0)
+      # PHRED scores are theoretically >= 0
       score.mat[, i] <- pmax(score.mat[, i], 0)
 
-      # 為了數值穩定性，計算 ln(P) 而非直接算 P
-      log_p_vals <- -(score.mat[, i] / 10) * log(10)
+      # Replace exact zeros with a small floor before log transform
+      # to avoid log(0) = -Inf, which maps to qchisq(Inf) = Inf.
+      # This floor matches the handling in predict_vacant_cluster() so
+      # training and prediction use the same numerical scale.
+      curr.vals <- score.mat[, i]
+      curr.vals[curr.vals == 0] <- 1e-6
 
-      # 使用 log.p = TRUE 直接將對數機率轉為卡方值 (df = 1)
-      score.mat[, i] <- qchisq(log_p_vals, df = 1, lower.tail = FALSE, log.p = TRUE)
+      # Compute ln(P) numerically stably: ln(P) = -(PHRED/10) * ln(10)
+      log.p.vals <- -(curr.vals / 10) * log(10)
 
-      # 處理極端情況產生的 Inf (如果有的話，用次大值*1.1替代)
+      # Convert log-probability to chi-squared (df = 1) using log.p = TRUE
+      # for numerical stability at extreme PHRED values
+      score.mat[, i] <- qchisq(log.p.vals, df = 1, lower.tail = FALSE, log.p = TRUE)
+
+      # Replace any residual Inf (can occur at very high PHRED) with
+      # 110% of the largest finite value
       if (any(is.infinite(score.mat[, i]))) {
-        max_val <- max(score.mat[!is.infinite(score.mat[, i]), i], na.rm = TRUE)
-        score.mat[is.infinite(score.mat[, i]), i] <- max_val * 1.1
+        max.val <- max(score.mat[!is.infinite(score.mat[, i]), i], na.rm = TRUE)
+        score.mat[is.infinite(score.mat[, i]), i] <- max.val * 1.1
       }
     }
   } else if (transform.method == "log") {
-    # 保留舊版邏輯以防向後相容需求
+    # Shift columns with negative values to non-negative before log1p.
+    # shift.vals records the per-column shift so predict_vacant_cluster()
+    # can apply the same offset to new data.
     for (i in seq_len(ncol(score.mat))) {
       col.min <- min(score.mat[, i])
       if (col.min < 0) {
@@ -79,36 +92,35 @@ cluster_score <- function(score,
   # ---- 3. Scaling (Standardization) ----
   col.means <- colMeans(score.mat)
   col.sds   <- apply(score.mat, 2, sd)
-  # 若某欄位全為常數 (sd=0)，則設 sd=1 避免除以零
+  # If a column is constant (sd = 0), set sd = 1 to avoid division by zero
   col.sds[col.sds == 0] <- 1
 
   score.scaled <- scale(score.mat, center = col.means, scale = col.sds)
 
   # ---- 4. Expand Scores (Allele Count Weighting) ----
-  # 解析 genotype 字串 (e.g. "0/1", "1|1") 計算 allele count
+  # Parse the genotype string to derive per-variant allele counts.
+  # Heterozygous (AC=1) contributes one row; homozygous alt (AC=2) contributes
+  # two rows. This weights the clustering toward higher-AC variants.
   ac <- vapply(stringi::stri_extract_all_regex(geno, "\\d"),
                function(chars) sum(as.integer(chars)), integer(1))
 
   if (sum(ac) == 0) return(NULL)
 
-  # 根據 allele count 展開分數矩陣 (Weighted Clustering)
-  idx.expanded <- rep(seq_len(nrow(score.scaled)), ac)
+  # Expand the score matrix according to allele count
+  idx.expanded   <- rep(seq_len(nrow(score.scaled)), ac)
   score.expanded <- score.scaled[idx.expanded, , drop = FALSE]
 
   # ---- 5. Clustering (GMM + K-means) ----
-  n.unique.points <- nrow(unique(score.expanded))
+  n.unique.points  <- nrow(unique(score.expanded))
   max.clust.search <- min(20, n.unique.points - 1)
 
   if (max.clust.search < 1) {
-    # 只有一個點或無法分群
-    km <- stats::kmeans(score.expanded, centers = score.expanded[1,,drop=FALSE])
+    # Only one unique point; degenerate case
+    km <- stats::kmeans(score.expanded, centers = score.expanded[1, , drop = FALSE])
   } else {
     bic.all <- NULL
-    # Mclust BIC search for optimal clusters
     for (i in 1:max.clust.search) {
       suppressMessages({
-        # Note: initialization might need handling if mclust version differs,
-        # but sticking to provided logic:
         bic.all <- mclust::mclustBICupdate(
           bic.all,
           mclust::mclustBIC(score.expanded, verbose = FALSE, G = i,
@@ -121,16 +133,7 @@ cluster_score <- function(score,
     if (is.null(mod) || max(mod$classification) == 1) {
       km <- stats::kmeans(score.expanded, centers = 1)
     } else {
-      # Use helper function defined in vacant_helpers.R (assuming available in pkg)
-      # If perform_kmeans is internal, make sure it's exported or available.
-      # Fallback to standard kmeans with GMM centers if helper is missing in this context
-      if (exists("perform_kmeans")) {
-        km <- perform_kmeans(score.expanded, mod)
-      } else {
-        # Fallback logic: Use GMM means as initial centers for K-means
-        gmm_centers <- t(mod$parameters$mean)
-        km <- stats::kmeans(score.expanded, centers = gmm_centers)
-      }
+      km <- perform_kmeans(score.expanded, mod)
     }
   }
 
@@ -205,25 +208,20 @@ cluster_score <- function(score,
   }
 
   # ---- 8. Identify "Layered" Pareto Anchors ----
+  # Use the pre-transform (but pre-scale) scores so anchor thresholds are
+  # expressed in the same units as the raw input to predict_vacant_cluster().
   score.expanded.raw <- score.mat[idx.expanded, , drop = FALSE]
 
-  K <- nrow(sorted.centers)
+  K            <- nrow(sorted.centers)
   anchors.list <- vector("list", K)
 
-  # Only find anchors if we have more than 1 cluster
-  if (K >= 1) {
-    for (k in 1:K) { # Changed to include cluster 1 as well if needed, or keep 2:K based on specific design
-      k.indices <- which(sorted.assignments.expanded == k)
-      if (length(k.indices) > 0) {
-        k.points <- score.expanded.raw[k.indices, , drop = FALSE]
-
-        # Check if helper function exists
-        if (exists("find_pareto_anchors_optimized")) {
-          anchors.k <- find_pareto_anchors_optimized(k.points)
-          if (!is.null(anchors.k)) {
-            anchors.list[[k]] <- anchors.k[order(anchors.k[,1]), , drop = FALSE]
-          }
-        }
+  for (k in seq_len(K)) {
+    k.indices <- which(sorted.assignments.expanded == k)
+    if (length(k.indices) > 0) {
+      k.points  <- score.expanded.raw[k.indices, , drop = FALSE]
+      anchors.k <- find_pareto_anchors_optimized(k.points)
+      if (!is.null(anchors.k)) {
+        anchors.list[[k]] <- anchors.k[order(anchors.k[, 1]), , drop = FALSE]
       }
     }
   }

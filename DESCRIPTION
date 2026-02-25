@@ -1,16 +1,24 @@
 Package: VACANT
-Title: What the Package Does (One Line, Title Case)
-Version: 0.0.0.9000
-Authors@R: 
-    person("First", "Last", , "first.last@example.com", role = c("aut", "cre"))
-Description: What the package does (one paragraph).
-License: `use_mit_license()`, `use_gpl3_license()` or friends to pick a
-    license
+Title: Variant Annotation Clustering AssociatioN Test
+Version: 0.1.0
+Authors@R:
+    person("Shu-Hsien", "Cho", email = "scho2@mdanderson.org",
+           role = c("aut", "cre"))
+Description: A framework for rare variant association testing in biobank-scale
+    data. Clusters rare variants into risk tiers using multi-dimensional
+    annotation scores and a Pareto Staircase boundary, then performs aggregated
+    association testing via Firth logistic regression and ACAT.
+License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.3
-Imports: 
+Imports:
+    data.table,
+    dplyr,
     logistf,
     mclust,
+    parallel,
     stats,
     stringi
+Suggests:
+    optparse

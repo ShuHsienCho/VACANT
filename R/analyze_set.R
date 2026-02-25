@@ -9,7 +9,7 @@
 #' @param acat.weight Character. "score" or "equal".
 #'
 #' @return Named numeric vector with results.
-#' @import logistf
+#' @importFrom logistf logistf logistf.control
 #' @export
 analyze_set <- function(pre, clus,
                         test = c("uni", "multi"),

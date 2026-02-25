@@ -69,9 +69,6 @@ option.list <- list(
   make_option("--n_cores",
               type = "integer", default = 1L,
               help = "[Analysis] CPU cores for parallel gene processing (default: 1)."),
-  make_option("--use_tabix",
-              type = "logical", default = FALSE,
-              help = "[Analysis] Use bgzip+tabix for fast per-gene access in large region matrices (default: FALSE). Recommended for chromosome/region-level matrices with many samples. Gene-level matrices (e.g. power simulations) do not need this."),
 
   # --- Prediction Mode ---
   make_option("--model",
@@ -87,7 +84,19 @@ option.list <- list(
   make_option("--output",
               type = "character", default = NULL,
               help = "[Required] Output file path.",
-              metavar = "FILE")
+              metavar = "FILE"),
+  make_option("--no_rds",
+              type = "logical", default = FALSE,
+              help = "[Analysis] If TRUE, skip saving per-gene .rds model files. \
+Recommended for inflation/null simulations where Pareto models are not needed. \
+(default: FALSE)",
+              metavar = "BOOL"),
+  make_option("--rds_dir",
+              type = "character", default = NULL,
+              help = "[Analysis] Directory to save per-gene .rds model files. \
+If NULL (default), .rds files are saved alongside the output CSV. \
+Use to keep model files separate from result tables (e.g. --rds_dir results/models).",
+              metavar = "DIR")
 )
 
 parser <- OptionParser(
@@ -180,9 +189,10 @@ if (!is.null(args$score_cols) && nzchar(args$score_cols)) {
 }
 
 message(sprintf(
-  "[vacant] test=%s | transform=%s | maf=%.4f | size_threshold=%d | n_cores=%d | use_tabix=%s",
+  "[vacant] test=%s | transform=%s | maf=%.4f | size_threshold=%d | n_cores=%d | no_rds=%s | rds_dir=%s",
   args$test, args$transform, args$maf, args$size_threshold, args$n_cores,
-  args$use_tabix
+  isTRUE(args$no_rds),
+  if (!is.null(args$rds_dir) && nzchar(args$rds_dir)) args$rds_dir else "(alongside csv)"
 ))
 
 result.dt <- tryCatch(
@@ -199,8 +209,7 @@ result.dt <- tryCatch(
     acat.weight      = args$weight,
     gene.col         = args$gene_col,
     meta.ncols       = args$meta_ncols,
-    n.cores          = args$n_cores,
-    use.tabix        = args$use_tabix
+    n.cores          = args$n_cores
   ),
   error = function(e) {
     stop(sprintf("[vacant] Error in vacant(): %s", e$message), call. = FALSE)
@@ -218,14 +227,24 @@ csv.dt <- result.dt[, !colnames(result.dt) %in% ".model", with = FALSE]
 data.table::fwrite(csv.dt, file = args$output)
 message(sprintf("[vacant] Results saved: %s", args$output))
 
-# RDS (one per gene)
-if (".model" %in% colnames(result.dt)) {
+# RDS (one per gene) -- skip entirely if --no_rds TRUE
+if (!isTRUE(args$no_rds) && ".model" %in% colnames(result.dt)) {
+
+  # Resolve target directory for .rds files
+  if (!is.null(args$rds_dir) && nzchar(args$rds_dir)) {
+    rds.base.dir <- args$rds_dir
+    dir.create(rds.base.dir, recursive = TRUE, showWarnings = FALSE)
+    # Derive a stem from the output CSV filename to namespace the .rds files
+    csv.stem <- tools::file_path_sans_ext(basename(args$output))
+    rds.prefix <- file.path(rds.base.dir, csv.stem)
+  } else {
+    # Default: save alongside the CSV (original behaviour)
+    rds.prefix <- tools::file_path_sans_ext(args$output)
+  }
+
   for (i in seq_len(nrow(result.dt))) {
     gene.name <- result.dt[["gene"]][i]
-    rds.path  <- sub("\\.csv$", sprintf("_%s.rds", gene.name), args$output)
-    if (rds.path == args$output) {
-      rds.path <- sprintf("%s_%s.rds", args$output, gene.name)
-    }
+    rds.path  <- sprintf("%s_%s.rds", rds.prefix, gene.name)
     saveRDS(
       list(
         results = as.list(csv.dt[i, ]),

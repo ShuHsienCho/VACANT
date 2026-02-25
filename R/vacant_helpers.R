@@ -38,21 +38,41 @@ acat_p <- function(t, w) {
 #' Perform K-means Clustering with Retry
 #'
 #' Attempts k-means clustering on \code{data} using GMM-derived initial
-#' centers. If an error occurs, waits one second and retries recursively.
+#' centers. If an error occurs, waits one second and retries up to
+#' \code{max.retries} times. Falls back to \code{centers = 1} if all
+#' retries are exhausted.
 #'
 #' @param data Numeric matrix or data frame.
 #' @param mod A Mclust model object containing a \code{classification} vector.
+#' @param max.retries Integer. Maximum number of retry attempts (default: 5).
 #' @return An object of class \code{\link[stats]{kmeans}}.
 #' @export
-perform_kmeans <- function(data, mod) {
-  tryCatch({
-    k <- length(unique(mod$classification))
-    stats::kmeans(data, centers = k, nstart = 25)
-  }, error = function(e) {
-    message("Error in perform_kmeans: ", e$message, "; retrying in 1 second...")
+perform_kmeans <- function(data, mod, max.retries = 5) {
+  attempt <- 0L
+  repeat {
+    fit <- tryCatch(
+      {
+        k <- length(unique(mod$classification))
+        stats::kmeans(data, centers = k, nstart = 25)
+      },
+      error = function(e) e
+    )
+    if (!inherits(fit, "error")) return(fit)
+
+    attempt <- attempt + 1L
+    if (attempt >= max.retries) {
+      warning(sprintf(
+        "perform_kmeans failed after %d attempts (%s). Falling back to k = 1.",
+        max.retries, fit$message
+      ))
+      return(stats::kmeans(data, centers = 1L))
+    }
+    message(sprintf(
+      "Error in perform_kmeans (attempt %d/%d): %s; retrying in 1 second...",
+      attempt, max.retries, fit$message
+    ))
     Sys.sleep(1)
-    perform_kmeans(data, mod)
-  })
+  }
 }
 
 
@@ -319,52 +339,4 @@ internal_prepare_inputs <- function(sub.matrix,
     phenotype  = pheno.final,
     covariates = cov.final
   )
-}
-
-#' Ensure bgzip + tabix index exists for a matrix file
-#'
-#' Converts a .gz matrix file to bgzip format and builds a tabix index
-#' keyed on the gene name column. The .bgz and .tbi files are written
-#' next to the original .gz file. This is a one-time setup; subsequent
-#' calls return immediately if the index already exists.
-#'
-#' @param gz.file Character. Path to the gzipped matrix file.
-#' @param gene.col Integer. Column index of the gene name field (default 7).
-#' @return Character. Path to the .bgz file.
-#' @export
-ensure_bgz_index <- function(gz.file, gene.col = 7L) {
-  bgz.file <- sub("\\.gz$", ".bgz", gz.file)
-  tbi.file <- paste0(bgz.file, ".tbi")
-
-  if (!file.exists(bgz.file) || !file.exists(tbi.file)) {
-    # Resolve bgzip/tabix from PATH or common locations
-    bgzip.bin <- Sys.which("bgzip")
-    tabix.bin <- Sys.which("tabix")
-
-    # Fallback: miniforge3 (common on MD Anderson HPC)
-    if (!nzchar(bgzip.bin)) {
-      bgzip.bin <- path.expand("~/miniforge3/bin/bgzip")
-    }
-    if (!nzchar(tabix.bin)) {
-      tabix.bin <- path.expand("~/miniforge3/bin/tabix")
-    }
-
-    if (!file.exists(bgzip.bin)) stop("bgzip not found: ", bgzip.bin)
-    if (!file.exists(tabix.bin)) stop("tabix not found: ", tabix.bin)
-
-    message(sprintf("[%s] Building bgzip+tabix index (one-time setup, may take a few minutes)...",
-                    format(Sys.time(), "%H:%M:%S")))
-
-    ret1 <- system(paste("zcat", shQuote(gz.file), "|", bgzip.bin, ">", shQuote(bgz.file)))
-    if (ret1 != 0L) stop("bgzip conversion failed (exit code ", ret1, ")")
-
-    ret2 <- system(paste(tabix.bin, "-s", gene.col, "-b 2 -e 3 -S 1", shQuote(bgz.file)))
-    if (ret2 != 0L) stop("tabix indexing failed (exit code ", ret2, ")")
-
-    message(sprintf("[%s] Index ready.", format(Sys.time(), "%H:%M:%S")))
-  } else {
-    message(sprintf("[%s] Using existing bgz index.", format(Sys.time(), "%H:%M:%S")))
-  }
-
-  bgz.file
 }

@@ -38,10 +38,6 @@
 #' @param n.cores Integer. Number of CPU cores for parallel gene processing.
 #'   Use 1 (default) for single-gene matrices. Set higher for
 #'   chromosome-level matrices with many genes (Linux/macOS only).
-#' @param use.tabix Logical. If TRUE, converts the matrix to bgzip format and
-#'   builds a tabix index for fast per-gene random access. Recommended for
-#'   large region/chromosome-level matrices. If FALSE (default), uses direct
-#'   zcat streaming, which is sufficient for small gene-level matrices.
 #'
 #' @return A \code{data.table} with one row per gene containing p-values,
 #'   effect estimates, cluster statistics, and metadata. Returns NULL if
@@ -76,8 +72,7 @@ vacant <- function(matrix.file,
                    acat.weight      = c("score", "equal"),
                    gene.col         = 7L,
                    meta.ncols       = 11L,
-                   n.cores          = 1L,
-                   use.tabix        = FALSE) {
+                   n.cores          = 1L) {
 
   transform.method <- match.arg(transform.method)
   test             <- match.arg(test)
@@ -119,24 +114,31 @@ vacant <- function(matrix.file,
     colnames(cov.dt) <- c("iid", paste0("PC", seq_len(ncol(cov.dt) - 1L)))
   }
 
-  # ---- 3. Prepare matrix access (bgz or gz) ----
-  if (use.tabix) {
-    mat.handle <- ensure_bgz_index(matrix.file, gene.col = gene.col)
+  # ---- 3. Auto-detect matrix access method (bgz or gz) ----
+  # If a pre-built .bgz + .tbi index exists alongside the .gz, use tabix for
+  # fast per-gene random access. Otherwise fall back to zcat|awk streaming.
+  # Users can pre-build the index externally (see README) for large matrices.
+  bgz.file <- sub("\\.gz$", ".bgz", matrix.file)
+  tbi.file <- paste0(bgz.file, ".tbi")
+  use.tabix <- file.exists(bgz.file) && file.exists(tbi.file)
 
-    # Detect genes via tabix --list-chroms
-    message(sprintf("[%s] Detecting genes...", format(Sys.time(), "%H:%M:%S")))
+  if (use.tabix) {
+    mat.handle <- bgz.file
+    message(sprintf("[%s] bgz+tabix index found, using tabix for fast access.",
+                    format(Sys.time(), "%H:%M:%S")))
     raw.genes <- system(paste("tabix --list-chroms", shQuote(mat.handle)), intern = TRUE)
   } else {
     mat.handle <- matrix.file
-
-    # Detect genes via zcat | awk (suitable for small/gene-level matrices)
-    message(sprintf("[%s] Detecting genes...", format(Sys.time(), "%H:%M:%S")))
+    message(sprintf("[%s] No bgz index found, using zcat streaming.",
+                    format(Sys.time(), "%H:%M:%S")))
     raw.genes <- system(
       paste("zcat", shQuote(matrix.file),
             "| awk 'NR>1{print $", gene.col, "}' | sort -u"),
       intern = TRUE
     )
   }
+
+  # ---- 4. Parse unique genes ----
 
   split.genes  <- trimws(unlist(strsplit(raw.genes, "[,;]")))
   unique.genes <- unique(
@@ -148,7 +150,7 @@ vacant <- function(matrix.file,
 
   message(sprintf("[%s] Detected %d gene(s).", format(Sys.time(), "%H:%M:%S"), n.genes))
 
-  # ---- 4. Worker: per-gene matrix access ----
+  # ---- 5. Worker: per-gene matrix access ----
   process_gene <- function(target.gene) {
 
     result <- tryCatch({
@@ -235,7 +237,7 @@ vacant <- function(matrix.file,
     result
   }
 
-  # ---- 5. Execute (parallel or sequential) ----
+  # ---- 6. Execute (parallel or sequential) ----
   message(sprintf("[%s] Starting analysis...", format(Sys.time(), "%H:%M:%S")))
 
   if (n.cores > 1L) {
@@ -245,7 +247,7 @@ vacant <- function(matrix.file,
     results.list <- lapply(unique.genes, process_gene)
   }
 
-  # ---- 6. Separate successes from failures and report ----
+  # ---- 7. Separate successes from failures and report ----
   # mclapply error objects (inherits "error") are caught by the outer tryCatch
   # inside process_gene, so they appear as fail lists, not raw error objects.
   is.success <- function(x) is.data.frame(x)

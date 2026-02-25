@@ -62,25 +62,22 @@ predict_vacant_cluster <- function(model, new.scores) {
       new.scores <- pmax(new.scores, 0)^2
 
     } else if (pm$transform.method == "phred_to_chisq") {
-      # PHRED Logic
       for (i in seq_len(ncol(new.scores))) {
         new.scores[, i] <- pmax(new.scores[, i], 0)
-        # Avoid log(0)
-        curr_vals <- new.scores[, i]
-        curr_vals[curr_vals == 0] <- 1e-6
 
-        log_p_vals <- -(curr_vals / 10) * log(10)
+        curr.vals <- new.scores[, i]
+        curr.vals[curr.vals == 0] <- 1e-6
 
-        # Convert to Chi-sq
-        val_trans <- qchisq(log_p_vals, df = 1, lower.tail = FALSE, log.p = TRUE)
+        log.p.vals <- -(curr.vals / 10) * log(10)
 
-        # Handle Inf
-        if (any(is.infinite(val_trans))) {
-          max_val <- max(val_trans[!is.infinite(val_trans)], na.rm = TRUE)
-          if(is.infinite(max_val)) max_val <- 100
-          val_trans[is.infinite(val_trans)] <- max_val * 1.1
+        val.trans <- qchisq(log.p.vals, df = 1, lower.tail = FALSE, log.p = TRUE)
+
+        if (any(is.infinite(val.trans))) {
+          max.val <- max(val.trans[!is.infinite(val.trans)], na.rm = TRUE)
+          if (is.infinite(max.val)) max.val <- 100
+          val.trans[is.infinite(val.trans)] <- max.val * 1.1
         }
-        new.scores[, i] <- val_trans
+        new.scores[, i] <- val.trans
       }
 
     } else if (pm$transform.method == "log") {
