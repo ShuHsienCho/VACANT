@@ -4,17 +4,21 @@
 \alias{perform_kmeans}
 \title{Perform K-means Clustering with Retry}
 \usage{
-perform_kmeans(data, mod)
+perform_kmeans(data, mod, max.retries = 5)
 }
 \arguments{
 \item{data}{Numeric matrix or data frame.}
 
 \item{mod}{A Mclust model object containing a \code{classification} vector.}
+
+\item{max.retries}{Integer. Maximum number of retry attempts (default: 5).}
 }
 \value{
 An object of class \code{\link[stats]{kmeans}}.
 }
 \description{
 Attempts k-means clustering on \code{data} using GMM-derived initial
-centers. If an error occurs, waits one second and retries recursively.
+centers. If an error occurs, waits one second and retries up to
+\code{max.retries} times. Falls back to \code{centers = 1} if all
+retries are exhausted.
 }

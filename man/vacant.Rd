@@ -17,7 +17,8 @@ vacant(
   acat.weight = c("score", "equal"),
   gene.col = 7L,
   meta.ncols = 11L,
-  n.cores = 1L
+  n.cores = 1L,
+  tmpdir = tempdir()
 )
 }
 \arguments{
@@ -65,6 +66,15 @@ string column (default: 11, standard XPAT 2.0).}
 \item{n.cores}{Integer. Number of CPU cores for parallel gene processing.
 Use 1 (default) for single-gene matrices. Set higher for
 chromosome-level matrices with many genes (Linux/macOS only).}
+
+\item{tmpdir}{Character. Path to a temporary directory used by
+\code{data.table::fread} for intermediate files when streaming matrix
+data via shell commands. Defaults to \code{tempdir()}, which respects
+the \code{TMPDIR} environment variable. When submitting many parallel
+jobs on an HPC cluster, set \code{TMPDIR} in your job script to a
+scratch partition with sufficient space (e.g.,
+\code{export TMPDIR=/scratch/your_id/tmp}) to prevent \code{/tmp}
+exhaustion across concurrent jobs.}
 }
 \value{
 A \code{data.table} with one row per gene containing p-values,

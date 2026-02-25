@@ -38,6 +38,14 @@
 #' @param n.cores Integer. Number of CPU cores for parallel gene processing.
 #'   Use 1 (default) for single-gene matrices. Set higher for
 #'   chromosome-level matrices with many genes (Linux/macOS only).
+#' @param tmpdir Character. Path to a temporary directory used by
+#'   \code{data.table::fread} for intermediate files when streaming matrix
+#'   data via shell commands. Defaults to \code{tempdir()}, which respects
+#'   the \code{TMPDIR} environment variable. When submitting many parallel
+#'   jobs on an HPC cluster, set \code{TMPDIR} in your job script to a
+#'   scratch partition with sufficient space (e.g.,
+#'   \code{export TMPDIR=/scratch/your_id/tmp}) to prevent \code{/tmp}
+#'   exhaustion across concurrent jobs.
 #'
 #' @return A \code{data.table} with one row per gene containing p-values,
 #'   effect estimates, cluster statistics, and metadata. Returns NULL if
@@ -72,7 +80,8 @@ vacant <- function(matrix.file,
                    acat.weight      = c("score", "equal"),
                    gene.col         = 7L,
                    meta.ncols       = 11L,
-                   n.cores          = 1L) {
+                   n.cores          = 1L,
+                   tmpdir           = tempdir()) {
 
   transform.method <- match.arg(transform.method)
   test             <- match.arg(test)
@@ -101,16 +110,19 @@ vacant <- function(matrix.file,
                   length(col.names) - meta.ncols))
 
   message(sprintf("[%s] Reading ped...", format(Sys.time(), "%H:%M:%S")))
-  ped.dt <- data.table::fread(ped.file, header = TRUE, data.table = FALSE)
+  ped.dt <- data.table::fread(ped.file, header = TRUE, data.table = FALSE,
+                              tmpdir = tmpdir)
   colnames(ped.dt) <- tolower(gsub("^#", "", colnames(ped.dt)))
 
   message(sprintf("[%s] Reading score file...", format(Sys.time(), "%H:%M:%S")))
-  score.dt <- data.table::fread(score.file, header = FALSE, data.table = FALSE)
+  score.dt <- data.table::fread(score.file, header = FALSE, data.table = FALSE,
+                                tmpdir = tmpdir)
 
   cov.dt <- NULL
   if (!is.null(cov.file)) {
     message(sprintf("[%s] Reading covariates...", format(Sys.time(), "%H:%M:%S")))
-    cov.dt <- data.table::fread(cov.file, header = FALSE, data.table = FALSE)
+    cov.dt <- data.table::fread(cov.file, header = FALSE, data.table = FALSE,
+                                tmpdir = tmpdir)
     colnames(cov.dt) <- c("iid", paste0("PC", seq_len(ncol(cov.dt) - 1L)))
   }
 
@@ -160,7 +172,8 @@ vacant <- function(matrix.file,
         sub.mat <- data.table::fread(
           cmd        = paste("tabix", shQuote(mat.handle), shQuote(target.gene)),
           header     = FALSE,
-          colClasses = "character"
+          colClasses = "character",
+          tmpdir     = tmpdir
         )
       } else {
         # zcat | awk: stream and filter (fast for small matrices)
@@ -169,7 +182,8 @@ vacant <- function(matrix.file,
                               " | awk 'NR>1 && $", gene.col,
                               "==\"", target.gene, "\"'"),
           header     = FALSE,
-          colClasses = "character"
+          colClasses = "character",
+          tmpdir     = tmpdir
         )
       }
 
