@@ -76,6 +76,10 @@ option.list <- list(
                            "On HPC clusters running many parallel jobs, set $TMPDIR in your job script",
                            "to a large scratch partition to prevent /tmp exhaustion."),
               metavar = "DIR"),
+  make_option("--no_rds",
+              type = "logical", default = FALSE,
+              help = "[Analysis] If TRUE, skip saving per-gene .rds model files (default: FALSE). Useful for inflation/null simulations where prediction models are not needed.",
+              metavar = "BOOL"),
 
   # --- Prediction Mode ---
   make_option("--model",
@@ -184,8 +188,9 @@ if (!is.null(args$score_cols) && nzchar(args$score_cols)) {
 }
 
 message(sprintf(
-  "[vacant] test=%s | transform=%s | maf=%.4f | size_threshold=%d | n_cores=%d | tmpdir=%s",
+  "[vacant] test=%s | transform=%s | maf=%.4f | size_threshold=%d | n_cores=%d | no_rds=%s | tmpdir=%s",
   args$test, args$transform, args$maf, args$size_threshold, args$n_cores,
+  args$no_rds,
   if (!is.null(args$tmpdir)) args$tmpdir else tempdir()
 ))
 
@@ -222,8 +227,8 @@ csv.dt <- result.dt[, !colnames(result.dt) %in% ".model", with = FALSE]
 data.table::fwrite(csv.dt, file = args$output)
 message(sprintf("[vacant] Results saved: %s", args$output))
 
-# RDS (one per gene)
-if (".model" %in% colnames(result.dt)) {
+# RDS (one per gene) - skip if --no_rds TRUE
+if (!isTRUE(args$no_rds) && ".model" %in% colnames(result.dt)) {
   for (i in seq_len(nrow(result.dt))) {
     gene.name <- result.dt[["gene"]][i]
     rds.path  <- sub("\\.csv$", sprintf("_%s.rds", gene.name), args$output)
@@ -240,6 +245,8 @@ if (".model" %in% colnames(result.dt)) {
     )
     message(sprintf("[vacant] Model saved: %s", rds.path))
   }
+} else if (isTRUE(args$no_rds)) {
+  message("[vacant] Skipping .rds output (--no_rds TRUE).")
 }
 
 message("[vacant] Done.")
