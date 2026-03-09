@@ -8,7 +8,8 @@ cluster_score(
   score,
   geno,
   size.threshold = 10,
-  transform.method = c("none", "raw_squared", "phred_to_chisq", "log", "sigmoid")
+  transform.method = c("none", "raw_squared", "phred_to_chisq", "log", "sigmoid"),
+  cond.number.warn = 100
 )
 }
 \arguments{
@@ -19,6 +20,12 @@ cluster_score(
 \item{size.threshold}{Integer. Minimum cluster size threshold (default 10).}
 
 \item{transform.method}{Character. "none", "raw_squared", "phred_to_chisq", or "log".}
+
+\item{cond.number.warn}{Numeric. If the condition number of the feature
+covariance matrix exceeds this threshold, a warning is printed and
+near-collinear columns are reported. High condition numbers indicate
+near-singular covariance, which destabilizes GMM BIC selection and
+K-means initialization. Default: 100.}
 }
 \value{
 A list containing:
@@ -27,6 +34,7 @@ A list containing:
 \item{ac.weights}{Numeric vector of scalar weights (Un-scaled sum) for ACAT.}
 \item{cluster.sizes}{Integer vector of cluster sizes.}
 \item{prediction.model}{List containing \code{anchors.list} for clinical prediction.}
+\item{cond.number}{Condition number of the standardized feature covariance.}
 }
 \description{
 Performs K-means clustering on standardized multi-dimensional scores and

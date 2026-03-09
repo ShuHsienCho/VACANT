@@ -7,20 +7,29 @@
 #' @param geno Character vector. Genotype strings for allele count weighting.
 #' @param size.threshold Integer. Minimum cluster size threshold (default 10).
 #' @param transform.method Character. "none", "raw_squared", "phred_to_chisq", or "log".
+#' @param cond.number.warn Numeric. If the condition number of the feature
+#'   covariance matrix exceeds this threshold, a warning is printed and
+#'   near-collinear columns are reported. High condition numbers indicate
+#'   near-singular covariance, which destabilizes GMM BIC selection and
+#'   K-means initialization. Default: 100.
+#'
 #' @return A list containing:
 #'   \item{group.assignments}{Integer vector of cluster IDs.}
 #'   \item{score.centers}{Matrix of cluster centers (Standardized & Sorted).}
 #'   \item{ac.weights}{Numeric vector of scalar weights (Un-scaled sum) for ACAT.}
 #'   \item{cluster.sizes}{Integer vector of cluster sizes.}
 #'   \item{prediction.model}{List containing \code{anchors.list} for clinical prediction.}
+#'   \item{cond.number}{Condition number of the standardized feature covariance.}
 #' @importFrom mclust Mclust mclustBIC mclustBICupdate hcRandomPairs
 #' @importFrom stats kmeans sd scale
 #' @importFrom stringi stri_extract_all_regex
 #' @export
 cluster_score <- function(score,
                           geno,
-                          size.threshold = 10,
-                          transform.method = c("none", "raw_squared", "phred_to_chisq", "log", "sigmoid")) {
+                          size.threshold   = 10,
+                          transform.method = c("none", "raw_squared",
+                                               "phred_to_chisq", "log", "sigmoid"),
+                          cond.number.warn = 100) {
 
   transform.method <- match.arg(transform.method)
 
@@ -33,50 +42,30 @@ cluster_score <- function(score,
   }
 
   if (is.null(colnames(score.mat))) {
-    colnames(score.mat) <- paste0("Score_", 1:ncol(score.mat))
+    colnames(score.mat) <- paste0("Score_", seq_len(ncol(score.mat)))
   }
 
   if (any(is.na(score.mat))) stop("NA values found in score matrix.")
 
-  # ---- 2. Transformation (NEW: Added raw_squared) ----
+  # ---- 2. Transformation ----
   shift.vals <- numeric(ncol(score.mat))
 
   if (transform.method == "raw_squared") {
-    # [NEW] CADD/aPC Raw Score Logic:
-    # 1. Truncate negatives (benign) to 0
-    # 2. Square to expand dynamic range for K-means
     score.mat <- pmax(score.mat, 0)^2
 
   } else if (transform.method == "phred_to_chisq") {
     for (i in seq_len(ncol(score.mat))) {
-      # PHRED scores are theoretically >= 0
       score.mat[, i] <- pmax(score.mat[, i], 0)
-
-      # Replace exact zeros with a small floor before log transform
-      # to avoid log(0) = -Inf, which maps to qchisq(Inf) = Inf.
-      # This floor matches the handling in predict_vacant_cluster() so
-      # training and prediction use the same numerical scale.
       curr.vals <- score.mat[, i]
       curr.vals[curr.vals == 0] <- 1e-6
-
-      # Compute ln(P) numerically stably: ln(P) = -(PHRED/10) * ln(10)
       log.p.vals <- -(curr.vals / 10) * log(10)
-
-      # Convert log-probability to chi-squared (df = 1) using log.p = TRUE
-      # for numerical stability at extreme PHRED values
       score.mat[, i] <- qchisq(log.p.vals, df = 1, lower.tail = FALSE, log.p = TRUE)
-
-      # Replace any residual Inf (can occur at very high PHRED) with
-      # 110% of the largest finite value
       if (any(is.infinite(score.mat[, i]))) {
         max.val <- max(score.mat[!is.infinite(score.mat[, i]), i], na.rm = TRUE)
         score.mat[is.infinite(score.mat[, i]), i] <- max.val * 1.1
       }
     }
   } else if (transform.method == "log") {
-    # Shift columns with negative values to non-negative before log1p.
-    # shift.vals records the per-column shift so predict_vacant_cluster()
-    # can apply the same offset to new data.
     for (i in seq_len(ncol(score.mat))) {
       col.min <- min(score.mat[, i])
       if (col.min < 0) {
@@ -92,21 +81,83 @@ cluster_score <- function(score,
   # ---- 3. Scaling (Standardization) ----
   col.means <- colMeans(score.mat)
   col.sds   <- apply(score.mat, 2, sd)
-  # If a column is constant (sd = 0), set sd = 1 to avoid division by zero
   col.sds[col.sds == 0] <- 1
 
   score.scaled <- scale(score.mat, center = col.means, scale = col.sds)
 
+  # ---- 3c. Jitter for near-zero variance columns ----
+  # When all indels in a gene receive an identical imputed score on one
+  # dimension (e.g. apc_protein_function: all frameshifts get the same
+  # gene-local median), that column has variance = 0 in score.scaled.
+  # A zero-variance column creates a point mass in the feature space,
+  # which causes the GMM covariance matrix to be singular and can induce
+  # spurious clusters along other dimensions.
+  # Fix: add a small N(0, jitter.sd^2) perturbation to any column whose
+  # empirical SD in the scaled matrix is below jitter.threshold.
+  # The perturbation is negligible relative to the inter-variant spread
+  # on other dimensions but restores numerical rank to the covariance matrix.
+  jitter.threshold <- 1e-6
+  jitter.sd        <- 1e-4
+  for (j in seq_len(ncol(score.scaled))) {
+    if (sd(score.scaled[, j]) < jitter.threshold) {
+      warning(sprintf(
+        paste0("cluster_score: column '%s' has near-zero variance (sd < %.0e) ",
+               "after standardization. This typically occurs when all variants ",
+               "share an identical imputed value (e.g. gene-local median for ",
+               "apc_protein_function). Adding N(0, %.0e) jitter to restore ",
+               "covariance matrix rank."),
+        colnames(score.scaled)[j], jitter.threshold, jitter.sd^2
+      ))
+      set.seed(42L + j)
+      score.scaled[, j] <- score.scaled[, j] +
+        stats::rnorm(nrow(score.scaled), mean = 0, sd = jitter.sd)
+    }
+  }
+
+  # ---- 3b. Condition number check (Challenge C defense) ----
+  # A near-singular covariance matrix (high condition number) indicates that
+  # two or more feature columns are nearly collinear. This destabilizes GMM
+  # covariance estimation and makes BIC-based K selection unreliable.
+  # The check is performed on the complete-case standardized matrix BEFORE
+  # allele-count expansion, so it reflects the user's input feature set.
+  # Recommended pre-screening: exclude columns with pairwise |r| > 0.90.
+  cond.number <- NA_real_
+  if (ncol(score.scaled) > 1) {
+    cov.mat     <- crossprod(score.scaled) / max(nrow(score.scaled) - 1, 1)
+    evals       <- tryCatch(eigen(cov.mat, symmetric = TRUE, only.values = TRUE)$values,
+                            error = function(e) NULL)
+    if (!is.null(evals) && min(abs(evals)) > 0) {
+      cond.number <- max(abs(evals)) / min(abs(evals))
+    }
+
+    if (!is.na(cond.number) && cond.number > cond.number.warn) {
+      # Identify the most collinear column pair
+      cor.mat  <- stats::cor(score.scaled)
+      diag(cor.mat) <- 0
+      max.abs.r <- max(abs(cor.mat), na.rm = TRUE)
+      idx       <- which(abs(cor.mat) == max.abs.r, arr.ind = TRUE)[1, ]
+      warning(sprintf(
+        paste0("cluster_score: feature covariance condition number = %.1f ",
+               "(threshold = %.0f). The most correlated pair is columns ",
+               "'%s' and '%s' (|r| = %.4f). ",
+               "Consider excluding one of these columns before clustering to ",
+               "stabilize GMM BIC selection. ",
+               "If using apc_*_raw inputs, verify that no pair with |r| > 0.90 ",
+               "was included (see inter-block correlation in Phase 1 output)."),
+        cond.number, cond.number.warn,
+        colnames(score.scaled)[idx[1]],
+        colnames(score.scaled)[idx[2]],
+        max.abs.r
+      ))
+    }
+  }
+
   # ---- 4. Expand Scores (Allele Count Weighting) ----
-  # Parse the genotype string to derive per-variant allele counts.
-  # Heterozygous (AC=1) contributes one row; homozygous alt (AC=2) contributes
-  # two rows. This weights the clustering toward higher-AC variants.
   ac <- vapply(stringi::stri_extract_all_regex(geno, "\\d"),
                function(chars) sum(as.integer(chars)), integer(1))
 
   if (sum(ac) == 0) return(NULL)
 
-  # Expand the score matrix according to allele count
   idx.expanded   <- rep(seq_len(nrow(score.scaled)), ac)
   score.expanded <- score.scaled[idx.expanded, , drop = FALSE]
 
@@ -115,16 +166,17 @@ cluster_score <- function(score,
   max.clust.search <- min(20, n.unique.points - 1)
 
   if (max.clust.search < 1) {
-    # Only one unique point; degenerate case
-    km <- stats::kmeans(score.expanded, centers = score.expanded[1, , drop = FALSE])
+    km <- stats::kmeans(score.expanded,
+                        centers = score.expanded[1, , drop = FALSE])
   } else {
     bic.all <- NULL
-    for (i in 1:max.clust.search) {
+    for (i in seq_len(max.clust.search)) {
       suppressMessages({
         bic.all <- mclust::mclustBICupdate(
           bic.all,
           mclust::mclustBIC(score.expanded, verbose = FALSE, G = i,
-                            initialization = list(hcPairs = mclust::hcRandomPairs(score.expanded)))
+                            initialization = list(
+                              hcPairs = mclust::hcRandomPairs(score.expanded)))
         )
       })
     }
@@ -138,80 +190,54 @@ cluster_score <- function(score,
   }
 
   # ---- 6. Merge Small Clusters ----
-  sizes   <- km$size
-  centers <- km$centers
+  sizes           <- km$size
+  centers         <- km$centers
   cluster.indices <- km$cluster
 
   while (any(sizes < size.threshold) && length(sizes) > 1) {
     i.min <- which.min(sizes)
-    # Calculate Euclidean distance to all other centers
-    dists <- apply(centers, 1, function(x) sum((x - centers[i.min,])^2))
+    dists <- apply(centers, 1, function(x) sum((x - centers[i.min, ])^2))
     dists[i.min] <- Inf
     merge.with <- which.min(dists)
 
-    # Merge logic
-    new.size <- sizes[i.min] + sizes[merge.with]
-    new.center <- (sizes[i.min] * centers[i.min,] + sizes[merge.with] * centers[merge.with,]) / new.size
+    new.size   <- sizes[i.min] + sizes[merge.with]
+    new.center <- (sizes[i.min] * centers[i.min, ] +
+                     sizes[merge.with] * centers[merge.with, ]) / new.size
 
-    sizes[merge.with]   <- new.size
-    centers[merge.with,] <- new.center
-
-    # Remove the merged cluster
+    sizes[merge.with]    <- new.size
+    centers[merge.with, ] <- new.center
     sizes   <- sizes[-i.min]
     centers <- centers[-i.min, , drop = FALSE]
 
-    # Re-assign indices
     old.cluster.vec <- cluster.indices
     cluster.indices[old.cluster.vec == i.min] <- merge.with
-
-    # Compact indices to 1..K
-    current.ids <- sort(unique(cluster.indices))
+    current.ids     <- sort(unique(cluster.indices))
     cluster.indices <- match(cluster.indices, current.ids)
   }
 
   # ---- 7. Sort Clusters & Calculate Weights ----
-  # Sort by magnitude of centers (risk)
-  center.vals <- rowSums(centers)
-  ord <- order(center.vals)
-
+  center.vals    <- rowSums(centers)
+  ord            <- order(center.vals)
   sorted.centers <- centers[ord, , drop = FALSE]
-  rownames(sorted.centers) <- seq_len(nrow(sorted.centers)) # Reset names
+  rownames(sorted.centers) <- seq_len(nrow(sorted.centers))
+  sorted.sizes   <- sizes[ord]
 
-  sorted.sizes <- sizes[ord]
-
-  # Remap assignments based on sort order
   map.vec <- integer(nrow(centers))
-  map.vec[ord] <- 1:nrow(centers)
+  map.vec[ord] <- seq_len(nrow(centers))
   sorted.assignments.expanded <- map.vec[cluster.indices]
 
-  # Contract back to variant level (taking the first assignment for each variant)
   final.assignments <- as.integer(
     tapply(sorted.assignments.expanded, idx.expanded, function(x) x[1])
   )
-
-  # Handle NAs if any variant was lost (unlikely with this logic)
   final.assignments[is.na(final.assignments)] <- 1
 
-  # 2. Calculate Weights based on "Original" (Un-scaled) Magnitude
-  # This ensures weights reflect the raw signal strength (e.g. Chi-sq magnitude)
   unscaled.centers <- t(t(sorted.centers) * col.sds + col.means)
+  raw.burden       <- rowSums(unscaled.centers)
+  min.burden       <- min(raw.burden)
+  final.weights    <- if (min.burden <= 0) {raw.burden - min.burden + 0.1 }  else {raw.burden}
 
-  # Sum across dimensions to get a scalar burden
-  raw.burden <- rowSums(unscaled.centers)
-
-  # Ensure Weights are Positive for ACAT
-  min.burden <- min(raw.burden)
-  if (min.burden <= 0) {
-    final.weights <- raw.burden - min.burden + 0.1
-  } else {
-    final.weights <- raw.burden
-  }
-
-  # ---- 8. Identify "Layered" Pareto Anchors ----
-  # Use the pre-transform (but pre-scale) scores so anchor thresholds are
-  # expressed in the same units as the raw input to predict_vacant_cluster().
+  # ---- 8. Pareto Anchors ----
   score.expanded.raw <- score.mat[idx.expanded, , drop = FALSE]
-
   K            <- nrow(sorted.centers)
   anchors.list <- vector("list", K)
 
@@ -226,20 +252,20 @@ cluster_score <- function(score,
     }
   }
 
-  # ---- Output ----
   list(
     group.assignments = final.assignments,
     score.centers     = sorted.centers,
     ac.weights        = final.weights,
     cluster.sizes     = sorted.sizes,
+    cond.number       = cond.number,
     prediction.model  = list(
-      type = "layered_pareto",
-      anchors.list = anchors.list,
-      K = K,
+      type             = "layered_pareto",
+      anchors.list     = anchors.list,
+      K                = K,
       transform.method = transform.method,
-      shift.vals = shift.vals,
-      scale.mean = col.means,
-      scale.sd = col.sds
+      shift.vals       = shift.vals,
+      scale.mean       = col.means,
+      scale.sd         = col.sds
     )
   )
 }
