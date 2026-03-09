@@ -164,6 +164,20 @@ cluster_score <- function(score,
   }
 
   # ---- 4. Expand Scores (Allele Count Weighting) ----
+  # Each variant row is replicated by its allele count (AC=1 for het,
+  # AC=2 for hom-alt), giving higher-AC variants proportionally more
+  # influence on GMM cluster boundary estimation. This is an intentional
+  # design choice: a variant observed at higher allelic dosage provides
+  # more statistical evidence about the functional risk tier it belongs
+  # to, and should carry more weight in defining that boundary.
+  #
+  # Note on BIC: row replication means Mclust's BIC penalty uses
+  # N_expanded rather than N_var as its effective sample size. Since
+  # replicated rows are not independent observations, BIC slightly
+  # underpenalizes large K (Mclust does not support observation weights
+  # natively). The size.threshold merging step serves as the primary
+  # safeguard against over-clustering: any cluster too small to carry
+  # meaningful allelic burden is merged before association testing.
   ac <- vapply(stringi::stri_extract_all_regex(geno, "\\d"),
                function(chars) sum(as.integer(chars)), integer(1))
 
@@ -201,8 +215,8 @@ cluster_score <- function(score,
   }
 
   # ---- 6. Merge Small Clusters ----
-  sizes           <- km$size
-  centers         <- km$centers
+  sizes   <- km$size
+  centers <- km$centers
   cluster.indices <- km$cluster
 
   while (any(sizes < size.threshold) && length(sizes) > 1) {
@@ -215,7 +229,7 @@ cluster_score <- function(score,
     new.center <- (sizes[i.min] * centers[i.min, ] +
                      sizes[merge.with] * centers[merge.with, ]) / new.size
 
-    sizes[merge.with]    <- new.size
+    sizes[merge.with]     <- new.size
     centers[merge.with, ] <- new.center
     sizes   <- sizes[-i.min]
     centers <- centers[-i.min, , drop = FALSE]
