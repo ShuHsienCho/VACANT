@@ -94,10 +94,21 @@ cluster_score <- function(score,
   # spurious clusters along other dimensions.
   # Fix: add a small N(0, jitter.sd^2) perturbation to any column whose
   # empirical SD in the scaled matrix is below jitter.threshold.
-  # The perturbation is negligible relative to the inter-variant spread
-  # on other dimensions but restores numerical rank to the covariance matrix.
+  #
+  # jitter.sd = 1e-2 rationale (numerical stability):
+  #   After standardization, all other feature columns have variance ~ 1.
+  #   A jitter.sd of 1e-4 gives variance = 1e-8 on the near-zero column.
+  #   Within any GMM cluster whose members are all gene-local-median
+  #   imputed (identical values), the per-cluster covariance matrix for
+  #   that column has variance = 1e-8, yielding a condition number of
+  #   ~ 1e-8 / 1 = 1e8. LAPACK/BLAS M-step solvers (Mclust uses C/Fortran
+  #   double precision, machine epsilon ~ 1e-16) may flag this as
+  #   essentially singular and abort. With jitter.sd = 1e-2, variance =
+  #   1e-4 and condition number drops to ~ 1e4, well within the safe
+  #   operating range. A 0.01-sigma perturbation does not alter the
+  #   relative topology of variants in the feature space.
   jitter.threshold <- 1e-6
-  jitter.sd        <- 1e-4
+  jitter.sd        <- 1e-2
   for (j in seq_len(ncol(score.scaled))) {
     if (sd(score.scaled[, j]) < jitter.threshold) {
       warning(sprintf(
@@ -234,7 +245,11 @@ cluster_score <- function(score,
   unscaled.centers <- t(t(sorted.centers) * col.sds + col.means)
   raw.burden       <- rowSums(unscaled.centers)
   min.burden       <- min(raw.burden)
-  final.weights    <- if (min.burden <= 0) {raw.burden - min.burden + 0.1 }  else {raw.burden}
+  final.weights    <- if (min.burden <= 0) {
+    raw.burden - min.burden + 0.1
+  } else {
+    raw.burden
+  }
 
   # ---- 8. Pareto Anchors ----
   score.expanded.raw <- score.mat[idx.expanded, , drop = FALSE]
