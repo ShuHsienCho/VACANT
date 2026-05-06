@@ -1,6 +1,6 @@
 # VACANT: Variant Annotation Clustering AssociatioN Test
 
-**VACANT** is a robust R framework for rare variant association testing. It leverages **multi-dimensional annotation scores** to cluster variants into risk tiers using a conservative **Pareto Staircase** approach, followed by an aggregated association test (ACAT) or a joint multivariate Firth regression.
+**VACANT** is a robust R framework for rare variant association testing. It leverages **multi-dimensional annotation scores** to cluster variants into risk tiers using a **Gaussian mixture model (GMM)** with **Pareto Staircase** boundaries, followed by a joint multivariate Firth regression or sequential univariate tests with ACAT aggregation.
 
 ---
 
@@ -42,11 +42,31 @@ Standard PLINK PED format:
 
 Tab-delimited, no header:
 - Cols 1-8: genomic coordinate metadata (must match matrix cols 1-8)
-- Col 9+: numeric annotation scores (e.g., CADD, aPC)
+- Col 9+: numeric annotation scores (e.g., CASM, CADD, aPC)
 
 ### 4. Covariate File (`--covariates`)
 
 No header; col 1 = IID, cols 2+ = numeric covariates (PCs, age, etc.)
+
+---
+
+## Method Overview
+
+VACANT clusters rare variants into annotation-based risk tiers, then tests each tier's association with phenotype via Firth-penalized logistic regression.
+
+**Clustering pipeline** (`cluster_score()`):
+1. Optional score transformation (e.g., log, sigmoid)
+2. Standardization (zero mean, unit variance)
+3. GMM with E (p=1) or EEI (p≥2) covariance model, BIC-based K selection
+4. Empty component removal (drop fitted components with zero assigned variants)
+5. Small-tier merging via pooled within-cluster Mahalanobis distance
+6. Pareto frontier identification per tier
+
+**Association testing** (`analyze_set()`):
+- `multi`: joint multivariate Firth regression with per-tier carrier indicators; gene-level p-value via penalized LRT; per-tier beta, one-sided p-value, OR, and 95% profile likelihood CI
+- `uni`: sequential nested burden tests with ACAT aggregation
+
+Clustering operates on annotation scores alone (no allele frequency information). Allele frequency enters only through the association test, ensuring tier assignments are phenotype-blind and transferable across cohorts.
 
 ---
 
@@ -61,9 +81,9 @@ library(VACANT)
 result <- vacant(
   matrix.file      = "XPAT.region.ATM_QC.matrix.gz",
   ped.file         = "UKB.BREAST.unrelated.ped",
-  score.file       = "casm_avg_spliceAI.txt",
+  score.file       = "casm_spliceAI.txt",
   cov.file         = "UKB.BREAST.unrelated.pca",
-  score.cols       = c("CADD", "aPC"),
+  score.cols       = c("CASM"),
   maf.threshold    = 0.005,
   transform.method = "none",
   test             = "multi"
@@ -73,7 +93,7 @@ result <- vacant(
 result <- vacant(
   matrix.file = "XPAT.chr17.matrix.gz",
   ped.file    = "UKB.BREAST.unrelated.ped",
-  score.file  = "casm_avg_spliceAI.txt",
+  score.file  = "casm_spliceAI.txt",
   n.cores     = 8
 )
 
@@ -82,7 +102,7 @@ result <- vacant(
 result <- vacant(
   matrix.file = "XPAT.chr17.matrix.gz",
   ped.file    = "UKB.BREAST.unrelated.ped",
-  score.file  = "casm_avg_spliceAI.txt",
+  score.file  = "casm_spliceAI.txt",
   n.cores     = 8,
   tmpdir      = "/scratch/your_id/tmp"   # or set export TMPDIR= in your job script
 )
@@ -112,10 +132,10 @@ sudo cp $(Rscript -e "cat(system.file('bin', 'vacant', package='VACANT'))") /usr
 vacant \
   --matrix     "XPAT.region.ATM_QC.matrix.gz" \
   --ped        "UKB.BREAST.unrelated.ped" \
-  --score      "casm_avg_spliceAI.txt" \
+  --score      "casm_spliceAI.txt" \
   --covariates "UKB.BREAST.unrelated.pca" \
   --output     "results/ATM.csv" \
-  --score_cols "CADD,aPC" \
+  --score_cols "CASM" \
   --maf        0.005 \
   --test       multi \
   --transform  none
@@ -124,7 +144,7 @@ vacant \
 Rscript $(Rscript -e "cat(system.file('bin', 'vacant', package='VACANT'))") \
   --matrix "XPAT.region.ATM_QC.matrix.gz" \
   --ped    "UKB.BREAST.unrelated.ped" \
-  --score  "casm_avg_spliceAI.txt" \
+  --score  "casm_spliceAI.txt" \
   --output "results/ATM.csv"
 ```
 
@@ -139,9 +159,9 @@ Rscript $(Rscript -e "cat(system.file('bin', 'vacant', package='VACANT'))") \
 | `--covariates` | No | NULL | Covariate/PCA file (no header). |
 | `--score_cols` | No | NULL | Comma-separated score column names. |
 | `--test` | No | `multi` | `multi` or `uni`. |
-| `--weight` | No | `score` | `score` or `equal`. |
+| `--weight` | No | `score` | ACAT weighting: `score` or `equal`. |
 | `--maf` | No | `0.01` | MAF threshold. |
-| `--size_threshold` | No | `10` | Minimum cluster size. |
+| `--size_threshold` | No | `10` | Minimum variant count per tier before merging. |
 | `--transform` | No | `none` | `none`, `raw_squared`, `phred_to_chisq`, `log`, `sigmoid`. |
 | `--gene_col` | No | `7` | Column index of gene name in matrix. |
 | `--meta_ncols` | No | `11` | Number of metadata columns before genotype string. |
@@ -179,7 +199,7 @@ python3 generate_lsf.py power -c breast \
 
 Each run produces two files per gene:
 
-- **`{output}.csv`**: Statistical results (p-values, betas, cluster statistics).
+- **`{output}.csv`**: Statistical results including per-tier beta, one-sided p-value, OR, 95% CI, gene-level penalized LRT p-value, and cluster metadata.
 - **`{output}_{gene}.rds`**: Pareto staircase model for use with `predict_vacant_cluster()`.
 
 ---
@@ -191,14 +211,13 @@ Each run produces two files per gene:
 | `vacant()` | Main entry point; accepts file paths |
 | `vacant_core()` | Core engine; accepts R objects directly |
 | `internal_prepare_inputs()` | Per-gene data preparation from XPAT matrix |
-| `predict_vacant_cluster()` | Predict risk cluster for new variants |
-| `cluster_score()` | GMM + K-means clustering with Pareto anchors |
-| `analyze_set()` | Firth regression + ACAT statistical tests |
+| `predict_vacant_cluster()` | Predict risk tier for new variants using Pareto staircase model |
+| `cluster_score()` | GMM-based tier identification (E/EEI model + Pareto anchors) |
+| `analyze_set()` | Firth regression + per-tier OR/CI + penalized LRT |
 | `safe_logistf()` | Firth regression with auto-retry |
 | `find_pareto_anchors_optimized()` | Pareto frontier identification |
 | `acat_t()` / `acat_p()` | ACAT statistic and p-value conversion |
 | `extract_sub()` | Genotype string extraction |
-| `perform_kmeans()` | K-means with GMM initialization and retry |
 
 ---
 
@@ -210,9 +229,9 @@ R/
 ├── vacant_core.R              # Core analysis engine (R object interface)
 ├── vacant_helpers.R           # Helper functions + internal_prepare_inputs
 ├── imports.R                  # Centralized @importFrom declarations
-├── cluster_score.R            # GMM + K-means clustering
-├── analyze_set.R              # Firth regression + ACAT tests
-└── predict_vacant_cluster.R   # Clinical prediction function
+├── cluster_score.R            # GMM-based tier identification (E/EEI)
+├── analyze_set.R              # Firth regression + per-tier OR/CI + LRT
+└── predict_vacant_cluster.R   # Clinical prediction via Pareto staircase
 inst/
 └── bin/
     └── vacant                 # CLI executable (Rscript with optparse)
