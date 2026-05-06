@@ -245,11 +245,13 @@ cluster_score <- function(score,
   k.current <- max(tier.indices)
 
   compute_centers <- function(data, assignment, k) {
-    t(sapply(seq_len(k), function(ck) {
+    raw <- sapply(seq_len(k), function(ck) {
       idx <- which(assignment == ck)
-      if (length(idx) == 1L) data[idx, , drop = FALSE]
-      else colMeans(data[idx, , drop = FALSE])
-    }))
+      if (length(idx) == 1L) as.numeric(data[idx, , drop = FALSE])
+      else as.numeric(colMeans(data[idx, , drop = FALSE]))
+    })
+    # sapply: p=1 -> vector of length k; p>1 -> p x k matrix
+    if (is.matrix(raw)) t(raw) else matrix(raw, ncol = 1)
   }
 
   centers <- compute_centers(score.scaled, tier.indices, k.current)
