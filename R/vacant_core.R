@@ -15,7 +15,7 @@
 #'   or \code{"uni"} (sequential univariate + ACAT).
 #' @param acat.weight Character. ACAT weighting: \code{"score"} (default)
 #'   or \code{"equal"}.
-#' @param size.threshold Integer. Minimum cluster size for K-means (default: 10).
+#' @param size.threshold Integer. Minimum variant count per tier (default: 10).
 #' @param transform.method Character. Score transformation applied before
 #'   clustering: \code{"none"} (default), \code{"raw_squared"},
 #'   \code{"phred_to_chisq"}, \code{"log"}, or \code{"sigmoid"}.
@@ -80,7 +80,8 @@ vacant_core <- function(geno,
   )
 
   # ---- 2. Clustering ----
-  clus <- cluster_score(score, geno,
+  # cluster_score operates on annotation scores only (no genotype input).
+  clus <- cluster_score(score,
                         size.threshold   = size.threshold,
                         transform.method = transform.method)
 

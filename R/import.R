@@ -8,8 +8,8 @@
 #' @importFrom data.table fread fwrite rbindlist
 #' @importFrom dplyr left_join
 #' @importFrom parallel mclapply
-#' @importFrom stats kmeans na.omit
+#' @importFrom stats kmeans na.omit cov sd
 #' @importFrom stringi stri_c stri_sub stri_count_fixed stri_extract_all_regex
 #' @importFrom logistf logistf logistf.control
-#' @importFrom mclust Mclust mclustBIC mclustBICupdate hcRandomPairs
+#' @importFrom mclust Mclust mclustBIC hcRandomPairs
 NULL
