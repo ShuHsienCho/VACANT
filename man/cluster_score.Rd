@@ -4,11 +4,7 @@
 \alias{cluster_score}
 \title{Cluster annotation scores with Multi-Layer Pareto Staircase Boundaries}
 \usage{
-cluster_score(
-  score,
-  size.threshold = 10,
-  transform.method = c("none", "raw_squared", "phred_to_chisq", "log", "sigmoid")
-)
+cluster_score(score, size.threshold = 10)
 }
 \arguments{
 \item{score}{Numeric matrix or vector. Rows are variants, columns are score
@@ -16,10 +12,6 @@ dimensions.}
 
 \item{size.threshold}{Integer. Minimum number of variants per tier before
 merging is triggered (default 10).}
-
-\item{transform.method}{Character. Pre-clustering score transformation:
-\code{"none"}, \code{"raw_squared"}, \code{"phred_to_chisq"},
-\code{"log"}, or \code{"sigmoid"}.}
 }
 \value{
 A list with elements:
@@ -36,11 +28,11 @@ Performs GMM-based clustering on standardized multi-dimensional annotation
 scores and identifies the Pareto frontier (Staircase) for each risk tier.
 }
 \details{
-The pipeline uses a Gaussian mixture model (GMM) with E covariance
-parameterization (equal variance; EEI for multivariate input) for both
-K selection via BIC and primary tier assignment via posterior classification.
-Empty components (fitted by mclust but assigned zero variants via MAP) are
-dropped before merging.  Small tiers below \code{size.threshold} variants
-are then merged to the nearest tier by pooled within-cluster Mahalanobis
-distance.
+Raw scores are standardized (zero mean, unit variance) before GMM fitting.
+The GMM uses E covariance parameterization (equal variance; EEI for
+multivariate input) for both K selection via BIC and primary tier assignment
+via posterior classification.  Empty components (fitted by mclust but
+assigned zero variants via MAP) are dropped before merging.  Small tiers
+below \code{size.threshold} variants are then merged to the nearest tier
+by pooled within-cluster Mahalanobis distance.
 }

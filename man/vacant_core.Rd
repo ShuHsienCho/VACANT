@@ -11,8 +11,7 @@ vacant_core(
   covariates = NULL,
   test = c("multi", "uni"),
   acat.weight = c("score", "equal"),
-  size.threshold = 10,
-  transform.method = c("none", "raw_squared", "phred_to_chisq", "log", "sigmoid")
+  size.threshold = 10
 )
 }
 \arguments{
@@ -33,18 +32,17 @@ or \code{"uni"} (sequential univariate + ACAT).}
 or \code{"equal"}.}
 
 \item{size.threshold}{Integer. Minimum variant count per tier (default: 10).}
-
-\item{transform.method}{Character. Score transformation applied before
-clustering: \code{"none"} (default), \code{"raw_squared"},
-\code{"phred_to_chisq"}, \code{"log"}, or \code{"sigmoid"}.}
 }
 \value{
-A named list with three elements:
+A named list with elements:
 \describe{
 \item{\code{results}}{Named numeric vector of p-values and effect estimates.}
+\item{\code{group.assignments}}{Integer vector of tier IDs per variant.}
+\item{\code{cluster.sizes}}{Integer vector of tier sizes.}
+\item{\code{score.centers}}{Matrix of tier centers (standardized scale).}
 \item{\code{model}}{Pareto staircase prediction model (for use with
 \code{predict_vacant_cluster()}).}
-\item{\code{info}}{List of metadata (test type, weights, n variants, transform).}
+\item{\code{info}}{List of metadata (test type, weights, n variants).}
 }
 Returns NULL if no carriers are found or the model fails.
 }

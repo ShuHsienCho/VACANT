@@ -1,6 +1,6 @@
 # VACANT: Variant Annotation Clustering AssociatioN Test
 
-**VACANT** is a robust R framework for rare variant association testing. It leverages **multi-dimensional annotation scores** to cluster variants into risk tiers using a **Gaussian mixture model (GMM)** with **Pareto Staircase** boundaries, followed by a joint multivariate Firth regression or sequential univariate tests with ACAT aggregation.
+**VACANT** is a robust R framework for rare variant association testing. It leverages **multi-dimensional annotation scores** to cluster variants into risk tiers using a **GMM-based Pareto Staircase** approach, followed by an aggregated association test (ACAT) or a joint multivariate Firth regression.
 
 ---
 
@@ -50,26 +50,6 @@ No header; col 1 = IID, cols 2+ = numeric covariates (PCs, age, etc.)
 
 ---
 
-## Method Overview
-
-VACANT clusters rare variants into annotation-based risk tiers, then tests each tier's association with phenotype via Firth-penalized logistic regression.
-
-**Clustering pipeline** (`cluster_score()`):
-1. Optional score transformation (e.g., log, sigmoid)
-2. Standardization (zero mean, unit variance)
-3. GMM with E (p=1) or EEI (p≥2) covariance model, BIC-based K selection
-4. Empty component removal (drop fitted components with zero assigned variants)
-5. Small-tier merging via pooled within-cluster Mahalanobis distance
-6. Pareto frontier identification per tier
-
-**Association testing** (`analyze_set()`):
-- `multi`: joint multivariate Firth regression with per-tier carrier indicators; gene-level p-value via penalized LRT; per-tier beta, one-sided p-value, OR, and 95% profile likelihood CI
-- `uni`: sequential nested burden tests with ACAT aggregation
-
-Clustering operates on annotation scores alone (no allele frequency information). Allele frequency enters only through the association test, ensuring tier assignments are phenotype-blind and transferable across cohorts.
-
----
-
 ## Usage
 
 ### R Library
@@ -77,16 +57,25 @@ Clustering operates on annotation scores alone (no allele frequency information)
 ```r
 library(VACANT)
 
-# Analysis (file path interface)
+# Single-score analysis (e.g., CASM)
 result <- vacant(
-  matrix.file      = "XPAT.region.ATM_QC.matrix.gz",
-  ped.file         = "UKB.BREAST.unrelated.ped",
-  score.file       = "casm_spliceAI.txt",
-  cov.file         = "UKB.BREAST.unrelated.pca",
-  score.cols       = c("CASM"),
-  maf.threshold    = 0.005,
-  transform.method = "none",
-  test             = "multi"
+  matrix.file   = "XPAT.region.ATM_QC.matrix.gz",
+  ped.file      = "UKB.BREAST.unrelated.ped",
+  score.file    = "casm_spliceAI.txt",
+  cov.file      = "UKB.BREAST.unrelated.pca",
+  maf.threshold = 0.01,
+  test          = "multi"
+)
+
+# Multi-score analysis (e.g., CADD + aPC)
+result <- vacant(
+  matrix.file   = "XPAT.region.ATM_QC.matrix.gz",
+  ped.file      = "UKB.BREAST.unrelated.ped",
+  score.file    = "casm_avg_spliceAI.txt",
+  cov.file      = "UKB.BREAST.unrelated.pca",
+  score.cols    = c("CADD", "aPC"),
+  maf.threshold = 0.005,
+  test          = "multi"
 )
 
 # Chromosome-level matrix with parallel execution
@@ -97,14 +86,13 @@ result <- vacant(
   n.cores     = 8
 )
 
-# HPC: many parallel jobs -> route temp files to scratch to avoid /tmp exhaustion
-# (data.table::fread writes intermediate files to tmpdir when streaming via cmd=)
+# HPC: route temp files to scratch to avoid /tmp exhaustion
 result <- vacant(
   matrix.file = "XPAT.chr17.matrix.gz",
   ped.file    = "UKB.BREAST.unrelated.ped",
   score.file  = "casm_spliceAI.txt",
   n.cores     = 8,
-  tmpdir      = "/scratch/your_id/tmp"   # or set export TMPDIR= in your job script
+  tmpdir      = "/scratch/your_id/tmp"
 )
 
 # Clinical prediction
@@ -113,39 +101,55 @@ new_scores    <- read.csv("data/new_variants_scores.csv")
 pred_clusters <- predict_vacant_cluster(model_obj$model, new_scores)
 ```
 
+### Tier Summary (Post-Analysis Characterization)
+
+```r
+# Run single-gene analysis via vacant_core()
+result <- vacant_core(geno, score, phenotype, covariates)
+
+# Base summary: score distribution, carrier counts, effect estimates per tier
+ts <- tier_summary(result, score, geno, phenotype,
+                   variant.info = data.frame(chr, pos, ref, alt))
+
+# Per-tier table
+ts$tier
+#   tier  n.variants  n.carriers.case  carrier.freq.case  OR  OR.lower  OR.upper  ...
+
+# Per-variant table (ready for ggplot2)
+ts$variant
+#   chr  pos  ref  alt  tier  score  carrier.count  carrier.count.case  ...
+
+# Optional enrichment with external annotations
+ts <- enrich_vep(ts, vep.table)       # adds consequence breakdown
+ts <- enrich_clinvar(ts, clinvar.table) # adds P/LP/VUS/LB/B counts
+
+# Visualization
+library(ggplot2)
+ggplot(ts$variant, aes(x = factor(tier), y = score)) +
+  geom_boxplot() +
+  labs(x = "Tier", y = "Annotation Score")
+```
+
 ### CLI (Bash)
 
 #### Setup (one-time)
 
 ```bash
-# Make executable
 chmod +x $(Rscript -e "cat(system.file('bin', 'vacant', package='VACANT'))")
-
-# Optional: copy to system PATH so 'vacant' works from anywhere
 sudo cp $(Rscript -e "cat(system.file('bin', 'vacant', package='VACANT'))") /usr/local/bin/
 ```
 
 #### Run
 
 ```bash
-# If copied to PATH
 vacant \
   --matrix     "XPAT.region.ATM_QC.matrix.gz" \
   --ped        "UKB.BREAST.unrelated.ped" \
   --score      "casm_spliceAI.txt" \
   --covariates "UKB.BREAST.unrelated.pca" \
   --output     "results/ATM.csv" \
-  --score_cols "CASM" \
-  --maf        0.005 \
-  --test       multi \
-  --transform  none
-
-# Without copying to PATH
-Rscript $(Rscript -e "cat(system.file('bin', 'vacant', package='VACANT'))") \
-  --matrix "XPAT.region.ATM_QC.matrix.gz" \
-  --ped    "UKB.BREAST.unrelated.ped" \
-  --score  "casm_spliceAI.txt" \
-  --output "results/ATM.csv"
+  --maf        0.01 \
+  --test       multi
 ```
 
 #### CLI Arguments
@@ -159,38 +163,30 @@ Rscript $(Rscript -e "cat(system.file('bin', 'vacant', package='VACANT'))") \
 | `--covariates` | No | NULL | Covariate/PCA file (no header). |
 | `--score_cols` | No | NULL | Comma-separated score column names. |
 | `--test` | No | `multi` | `multi` or `uni`. |
-| `--weight` | No | `score` | ACAT weighting: `score` or `equal`. |
+| `--weight` | No | `score` | ACAT weighting strategy: `score` (weight by cumulative tier center) or `equal`. |
 | `--maf` | No | `0.01` | MAF threshold. |
-| `--size_threshold` | No | `10` | Minimum variant count per tier before merging. |
-| `--transform` | No | `none` | `none`, `raw_squared`, `phred_to_chisq`, `log`, `sigmoid`. |
+| `--size_threshold` | No | `10` | Minimum variant count per tier (triggers merging). |
 | `--gene_col` | No | `7` | Column index of gene name in matrix. |
 | `--meta_ncols` | No | `11` | Number of metadata columns before genotype string. |
 | `--n_cores` | No | `1` | CPU cores (set > 1 for chromosome-level matrices). |
-| `--tmpdir` | No | `tempdir()` | Temp directory for `fread` intermediate files. Defaults to R's `tempdir()`, which respects the `$TMPDIR` environment variable. When running many parallel HPC jobs, set `export TMPDIR=/scratch/your_id/tmp` in your job script (preferred), or pass this flag directly, to prevent `/tmp` exhaustion. |
+| `--tmpdir` | No | `tempdir()` | Temp directory for `fread` intermediate files. |
 
 ---
 
 ## HPC Note: Parallel Jobs and /tmp Exhaustion
 
-When submitting hundreds of concurrent LSF/SLURM jobs, `data.table::fread` with `cmd=` (used internally when streaming the matrix) writes intermediate files to `/tmp`. On shared compute nodes, this can exhaust the node's local `/tmp` space and cause jobs to fail with:
+When submitting hundreds of concurrent LSF/SLURM jobs, `data.table::fread` with `cmd=` writes intermediate files to `/tmp`. On shared compute nodes, this can exhaust `/tmp`:
 
 ```
 External command failed with exit code 2. This can happen when the disk is
 full in the temporary directory ('/tmp/Rtmp...'). See ?fread for the tmpdir argument.
 ```
 
-**Recommended fix**: In your job script, redirect temp files to a scratch partition:
+**Fix**: Redirect temp files to a scratch partition in your job script:
 
 ```bash
 export TMPDIR=/scratch/your_id/tmp
 mkdir -p $TMPDIR
-```
-
-If using `generate_lsf.py`, pass `--scratch_tmp` to inject this automatically into all generated job scripts:
-
-```bash
-python3 generate_lsf.py power -c breast \
-  --scratch_tmp /rsrch3/scratch/biostatistics/your_id/tmp
 ```
 
 ---
@@ -199,8 +195,10 @@ python3 generate_lsf.py power -c breast \
 
 Each run produces two files per gene:
 
-- **`{output}.csv`**: Statistical results including per-tier beta, one-sided p-value, OR, 95% CI, gene-level penalized LRT p-value, and cluster metadata.
+- **`{output}.csv`**: Statistical results (p-values, per-tier betas, ORs, 95% CIs, cluster statistics).
 - **`{output}_{gene}.rds`**: Pareto staircase model for use with `predict_vacant_cluster()`.
+
+When using the R library interface, `vacant()` returns a `data.table` with one row per gene. List columns `.model` (Pareto staircase model) and `.cluster` (per-variant tier assignments) are included for downstream use with `predict_vacant_cluster()` and `tier_summary()`.
 
 ---
 
@@ -211,13 +209,17 @@ Each run produces two files per gene:
 | `vacant()` | Main entry point; accepts file paths |
 | `vacant_core()` | Core engine; accepts R objects directly |
 | `internal_prepare_inputs()` | Per-gene data preparation from XPAT matrix |
-| `predict_vacant_cluster()` | Predict risk tier for new variants using Pareto staircase model |
-| `cluster_score()` | GMM-based tier identification (E/EEI model + Pareto anchors) |
-| `analyze_set()` | Firth regression + per-tier OR/CI + penalized LRT |
+| `cluster_score()` | GMM-based clustering (E/EEI model) with Pareto anchors |
+| `analyze_set()` | Firth regression (per-tier beta/OR/CI + gene-level penalized LRT) |
+| `tier_summary()` | Post-analysis tier characterization (score, carrier, effect summary) |
+| `enrich_vep()` | Add VEP functional consequence breakdown to tier summary |
+| `enrich_clinvar()` | Add ClinVar classification counts to tier summary |
+| `predict_vacant_cluster()` | Predict risk tier for new variants |
 | `safe_logistf()` | Firth regression with auto-retry |
 | `find_pareto_anchors_optimized()` | Pareto frontier identification |
 | `acat_t()` / `acat_p()` | ACAT statistic and p-value conversion |
 | `extract_sub()` | Genotype string extraction |
+| ~~`perform_kmeans()`~~ | Deprecated. Retained for backward compatibility. |
 
 ---
 
@@ -229,9 +231,10 @@ R/
 ├── vacant_core.R              # Core analysis engine (R object interface)
 ├── vacant_helpers.R           # Helper functions + internal_prepare_inputs
 ├── imports.R                  # Centralized @importFrom declarations
-├── cluster_score.R            # GMM-based tier identification (E/EEI)
-├── analyze_set.R              # Firth regression + per-tier OR/CI + LRT
-└── predict_vacant_cluster.R   # Clinical prediction via Pareto staircase
+├── cluster_score.R            # GMM-based clustering (E/EEI)
+├── analyze_set.R              # Firth regression + ACAT tests
+├── tier_summary.R             # Post-analysis tier characterization + enrichment
+└── predict_vacant_cluster.R   # Clinical prediction function
 inst/
 └── bin/
     └── vacant                 # CLI executable (Rscript with optparse)

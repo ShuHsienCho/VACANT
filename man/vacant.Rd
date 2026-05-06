@@ -12,7 +12,6 @@ vacant(
   score.cols = NULL,
   maf.threshold = 0.01,
   size.threshold = 10L,
-  transform.method = c("none", "raw_squared", "phred_to_chisq", "log", "sigmoid"),
   test = c("multi", "uni"),
   acat.weight = c("score", "equal"),
   gene.col = 7L,
@@ -44,18 +43,14 @@ named \code{"score"}.}
 \item{maf.threshold}{Numeric. Upper MAF bound for rare variant filtering
 (default: 0.01).}
 
-\item{size.threshold}{Integer. Minimum cluster size for K-means
-(default: 10).}
-
-\item{transform.method}{Character. Score transformation applied before
-clustering: \code{"none"} (default), \code{"raw_squared"},
-\code{"phred_to_chisq"}, \code{"log"}, or \code{"sigmoid"}.}
+\item{size.threshold}{Integer. Minimum variant count per tier; smaller
+tiers are merged to the nearest tier (default: 10).}
 
 \item{test}{Character. \code{"multi"} (joint multivariate Firth; default)
 or \code{"uni"} (sequential univariate + ACAT).}
 
-\item{acat.weight}{Character. ACAT weighting: \code{"score"} (default)
-or \code{"equal"}.}
+\item{acat.weight}{Character. ACAT weighting strategy: \code{"score"}
+(weight by cumulative tier center; default) or \code{"equal"}.}
 
 \item{gene.col}{Integer. Column index of the gene name field in the matrix
 (default: 7, standard XPAT 2.0).}
@@ -78,8 +73,11 @@ exhaustion across concurrent jobs.}
 }
 \value{
 A \code{data.table} with one row per gene containing p-values,
-effect estimates, cluster statistics, and metadata. Returns NULL if
-all genes fail.
+effect estimates, cluster statistics, and metadata. List columns
+\code{.model} (Pareto staircase model) and \code{.cluster} (per-variant
+tier assignments) are included for downstream use with
+\code{predict_vacant_cluster()} and \code{tier_summary()}.
+Returns NULL if all genes fail.
 }
 \description{
 Main entry point for the VACANT package. Accepts file paths to an XPAT 2.0
@@ -91,18 +89,17 @@ each gene. Supports parallel execution for multi-gene matrices.
 \examples{
 \dontrun{
 result <- vacant(
-  matrix.file      = "XPAT.region.ATM_QC.matrix.gz",
-  ped.file         = "UKB.BREAST.unrelated.ped",
-  score.file       = "casm_avg_spliceAI.txt",
-  cov.file         = "UKB.BREAST.unrelated.pca",
-  score.cols       = c("CADD", "aPC"),
-  maf.threshold    = 0.005,
-  transform.method = "none",
-  test             = "multi"
+  matrix.file   = "XPAT.region.ATM_QC.matrix.gz",
+  ped.file      = "UKB.BREAST.unrelated.ped",
+  score.file    = "casm_spliceAI.txt",
+  cov.file      = "UKB.BREAST.unrelated.pca",
+  maf.threshold = 0.01,
+  test          = "multi"
 )
 }
 
 }
 \seealso{
-\code{\link{vacant_core}}, \code{\link{predict_vacant_cluster}}
+\code{\link{vacant_core}}, \code{\link{predict_vacant_cluster}},
+\code{\link{tier_summary}}
 }

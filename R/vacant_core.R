@@ -16,16 +16,16 @@
 #' @param acat.weight Character. ACAT weighting: \code{"score"} (default)
 #'   or \code{"equal"}.
 #' @param size.threshold Integer. Minimum variant count per tier (default: 10).
-#' @param transform.method Character. Score transformation applied before
-#'   clustering: \code{"none"} (default), \code{"raw_squared"},
-#'   \code{"phred_to_chisq"}, \code{"log"}, or \code{"sigmoid"}.
 #'
-#' @return A named list with three elements:
+#' @return A named list with elements:
 #'   \describe{
 #'     \item{\code{results}}{Named numeric vector of p-values and effect estimates.}
+#'     \item{\code{group.assignments}}{Integer vector of tier IDs per variant.}
+#'     \item{\code{cluster.sizes}}{Integer vector of tier sizes.}
+#'     \item{\code{score.centers}}{Matrix of tier centers (standardized scale).}
 #'     \item{\code{model}}{Pareto staircase prediction model (for use with
 #'       \code{predict_vacant_cluster()}).}
-#'     \item{\code{info}}{List of metadata (test type, weights, n variants, transform).}
+#'     \item{\code{info}}{List of metadata (test type, weights, n variants).}
 #'   }
 #'   Returns NULL if no carriers are found or the model fails.
 #'
@@ -34,16 +34,13 @@
 vacant_core <- function(geno,
                         score,
                         phenotype,
-                        covariates       = NULL,
-                        test             = c("multi", "uni"),
-                        acat.weight      = c("score", "equal"),
-                        size.threshold   = 10,
-                        transform.method = c("none", "raw_squared",
-                                             "phred_to_chisq", "log", "sigmoid")) {
+                        covariates     = NULL,
+                        test           = c("multi", "uni"),
+                        acat.weight    = c("score", "equal"),
+                        size.threshold = 10) {
 
-  test             <- match.arg(test)
-  acat.weight      <- match.arg(acat.weight)
-  transform.method <- match.arg(transform.method)
+  test        <- match.arg(test)
+  acat.weight <- match.arg(acat.weight)
 
   # ---- 1. Initial Firth P-value (Aggregated Burden) ----
   gt <- if (length(geno) == 1) {
@@ -80,10 +77,7 @@ vacant_core <- function(geno,
   )
 
   # ---- 2. Clustering ----
-  # cluster_score operates on annotation scores only (no genotype input).
-  clus <- cluster_score(score,
-                        size.threshold   = size.threshold,
-                        transform.method = transform.method)
+  clus <- cluster_score(score, size.threshold = size.threshold)
 
   if (is.null(clus)) {
     warning("Clustering failed. Returning NULL.")
@@ -96,13 +90,15 @@ vacant_core <- function(geno,
                            acat.weight = acat.weight)
 
   list(
-    results = stats.out,
-    model   = clus$prediction.model,
-    info    = list(
-      test      = test,
-      weight    = acat.weight,
-      n_vars    = length(geno),
-      transform = transform.method
+    results           = stats.out,
+    group.assignments = clus$group.assignments,
+    cluster.sizes     = clus$cluster.sizes,
+    score.centers     = clus$score.centers,
+    model             = clus$prediction.model,
+    info              = list(
+      test   = test,
+      weight = acat.weight,
+      n_vars = length(geno)
     )
   )
 }

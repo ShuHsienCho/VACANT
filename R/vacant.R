@@ -22,15 +22,12 @@
 #'   named \code{"score"}.
 #' @param maf.threshold Numeric. Upper MAF bound for rare variant filtering
 #'   (default: 0.01).
-#' @param size.threshold Integer. Minimum cluster size for K-means
-#'   (default: 10).
-#' @param transform.method Character. Score transformation applied before
-#'   clustering: \code{"none"} (default), \code{"raw_squared"},
-#'   \code{"phred_to_chisq"}, \code{"log"}, or \code{"sigmoid"}.
+#' @param size.threshold Integer. Minimum variant count per tier; smaller
+#'   tiers are merged to the nearest tier (default: 10).
 #' @param test Character. \code{"multi"} (joint multivariate Firth; default)
 #'   or \code{"uni"} (sequential univariate + ACAT).
-#' @param acat.weight Character. ACAT weighting: \code{"score"} (default)
-#'   or \code{"equal"}.
+#' @param acat.weight Character. ACAT weighting strategy: \code{"score"}
+#'   (weight by cumulative tier center; default) or \code{"equal"}.
 #' @param gene.col Integer. Column index of the gene name field in the matrix
 #'   (default: 7, standard XPAT 2.0).
 #' @param meta.ncols Integer. Number of metadata columns before the genotype
@@ -48,44 +45,43 @@
 #'   exhaustion across concurrent jobs.
 #'
 #' @return A \code{data.table} with one row per gene containing p-values,
-#'   effect estimates, cluster statistics, and metadata. Returns NULL if
-#'   all genes fail.
+#'   effect estimates, cluster statistics, and metadata. List columns
+#'   \code{.model} (Pareto staircase model) and \code{.cluster} (per-variant
+#'   tier assignments) are included for downstream use with
+#'   \code{predict_vacant_cluster()} and \code{tier_summary()}.
+#'   Returns NULL if all genes fail.
 #'
 #' @examples
 #' \dontrun{
 #' result <- vacant(
-#'   matrix.file      = "XPAT.region.ATM_QC.matrix.gz",
-#'   ped.file         = "UKB.BREAST.unrelated.ped",
-#'   score.file       = "casm_avg_spliceAI.txt",
-#'   cov.file         = "UKB.BREAST.unrelated.pca",
-#'   score.cols       = c("CADD", "aPC"),
-#'   maf.threshold    = 0.005,
-#'   transform.method = "none",
-#'   test             = "multi"
+#'   matrix.file   = "XPAT.region.ATM_QC.matrix.gz",
+#'   ped.file      = "UKB.BREAST.unrelated.ped",
+#'   score.file    = "casm_spliceAI.txt",
+#'   cov.file      = "UKB.BREAST.unrelated.pca",
+#'   maf.threshold = 0.01,
+#'   test          = "multi"
 #' )
 #' }
 #'
-#' @seealso \code{\link{vacant_core}}, \code{\link{predict_vacant_cluster}}
+#' @seealso \code{\link{vacant_core}}, \code{\link{predict_vacant_cluster}},
+#'   \code{\link{tier_summary}}
 #' @export
 vacant <- function(matrix.file,
                    ped.file,
                    score.file,
-                   cov.file         = NULL,
-                   score.cols       = NULL,
-                   maf.threshold    = 0.01,
-                   size.threshold   = 10L,
-                   transform.method = c("none", "raw_squared",
-                                        "phred_to_chisq", "log", "sigmoid"),
-                   test             = c("multi", "uni"),
-                   acat.weight      = c("score", "equal"),
-                   gene.col         = 7L,
-                   meta.ncols       = 11L,
-                   n.cores          = 1L,
-                   tmpdir           = tempdir()) {
+                   cov.file       = NULL,
+                   score.cols     = NULL,
+                   maf.threshold  = 0.01,
+                   size.threshold = 10L,
+                   test           = c("multi", "uni"),
+                   acat.weight    = c("score", "equal"),
+                   gene.col       = 7L,
+                   meta.ncols     = 11L,
+                   n.cores        = 1L,
+                   tmpdir         = tempdir()) {
 
-  transform.method <- match.arg(transform.method)
-  test             <- match.arg(test)
-  acat.weight      <- match.arg(acat.weight)
+  test        <- match.arg(test)
+  acat.weight <- match.arg(acat.weight)
 
   # ---- 1. Validate file paths ----
   for (fp in c(matrix.file, ped.file, score.file)) {
@@ -96,7 +92,6 @@ vacant <- function(matrix.file,
   }
 
   # ---- 2. Read header, PED, scores, covariates into memory ----
-  # matrix is NOT read here - bgz index handles per-gene access.
   message(sprintf("[%s] Reading matrix header...",
                   format(Sys.time(), "%H:%M:%S")))
 
@@ -127,9 +122,6 @@ vacant <- function(matrix.file,
   }
 
   # ---- 3. Auto-detect matrix access method (bgz or gz) ----
-  # If a pre-built .bgz + .tbi index exists alongside the .gz, use tabix for
-  # fast per-gene random access. Otherwise fall back to zcat|awk streaming.
-  # Users can pre-build the index externally (see README) for large matrices.
   bgz.file <- sub("\\.gz$", ".bgz", matrix.file)
   tbi.file <- paste0(bgz.file, ".tbi")
   use.tabix <- file.exists(bgz.file) && file.exists(tbi.file)
@@ -151,7 +143,6 @@ vacant <- function(matrix.file,
   }
 
   # ---- 4. Parse unique genes ----
-
   split.genes  <- trimws(unlist(strsplit(raw.genes, "[,;]")))
   unique.genes <- unique(
     split.genes[split.genes != "" & split.genes != "." & !is.na(split.genes)]
@@ -168,7 +159,6 @@ vacant <- function(matrix.file,
     result <- tryCatch({
 
       if (use.tabix) {
-        # tabix: instant random access by gene name
         sub.mat <- data.table::fread(
           cmd        = paste("tabix", shQuote(mat.handle), shQuote(target.gene)),
           header     = FALSE,
@@ -176,7 +166,6 @@ vacant <- function(matrix.file,
           tmpdir     = tmpdir
         )
       } else {
-        # zcat | awk: stream and filter (fast for small matrices)
         sub.mat <- data.table::fread(
           cmd        = paste0("zcat ", shQuote(mat.handle),
                               " | awk 'NR>1 && $", gene.col,
@@ -210,14 +199,13 @@ vacant <- function(matrix.file,
 
       vacant.obj <- tryCatch(
         vacant_core(
-          geno             = prepared$geno,
-          score            = prepared$score,
-          phenotype        = prepared$phenotype,
-          covariates       = prepared$covariates,
-          test             = test,
-          acat.weight      = acat.weight,
-          size.threshold   = size.threshold,
-          transform.method = transform.method
+          geno           = prepared$geno,
+          score          = prepared$score,
+          phenotype      = prepared$phenotype,
+          covariates     = prepared$covariates,
+          test           = test,
+          acat.weight    = acat.weight,
+          size.threshold = size.threshold
         ),
         error = function(e) {
           list(status = "fail", gene = target.gene,
@@ -225,12 +213,10 @@ vacant <- function(matrix.file,
         }
       )
 
-      # vacant_core returns NULL when there are no carriers
       if (is.null(vacant.obj)) {
         return(list(status = "fail", gene = target.gene,
                     reason = "vacant_core() returned NULL (no carriers)"))
       }
-      # vacant_core returned a fail list (from inner tryCatch above)
       if (is.list(vacant.obj) && identical(vacant.obj$status, "fail")) {
         return(vacant.obj)
       }
@@ -240,10 +226,10 @@ vacant <- function(matrix.file,
       res.df$n_variants <- length(prepared$geno)
       res.df$n_samples  <- nrow(prepared$phenotype)
       res.df$.model     <- list(vacant.obj$model)
+      res.df$.cluster   <- list(vacant.obj$group.assignments)
       res.df
 
     }, error = function(e) {
-      # Catch any unexpected error (e.g. from grepl, as.data.frame, etc.)
       list(status = "fail", gene = target.gene,
            reason = paste("unexpected error:", e$message))
     })
@@ -262,15 +248,12 @@ vacant <- function(matrix.file,
   }
 
   # ---- 7. Separate successes from failures and report ----
-  # mclapply error objects (inherits "error") are caught by the outer tryCatch
-  # inside process_gene, so they appear as fail lists, not raw error objects.
   is.success <- function(x) is.data.frame(x)
   is.fail    <- function(x) is.list(x) && identical(x$status, "fail")
 
   failed.list  <- Filter(is.fail,    results.list)
   results.list <- Filter(is.success, results.list)
 
-  # Report all failures with reasons (visible in .e log even with mclapply)
   if (length(failed.list) > 0L) {
     fail.summary <- vapply(failed.list, function(x) {
       sprintf("  SKIP [%s]: %s", x$gene, x$reason)

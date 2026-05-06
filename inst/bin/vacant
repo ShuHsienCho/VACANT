@@ -50,16 +50,13 @@ option.list <- list(
               help = "[Analysis] Statistical test: multi (default) or uni."),
   make_option("--weight",
               type = "character", default = "score",
-              help = "[Analysis] ACAT weighting: score (default) or equal."),
+              help = "[Analysis] ACAT weighting strategy: score (default) or equal."),
   make_option("--maf",
               type = "numeric", default = 0.01,
               help = "[Analysis] MAF threshold (default: 0.01)."),
   make_option("--size_threshold",
               type = "integer", default = 10L,
-              help = "[Analysis] Minimum cluster size for K-means (default: 10)."),
-  make_option("--transform",
-              type = "character", default = "none",
-              help = "[Analysis] Score transformation: none (default), raw_squared, phred_to_chisq, log, sigmoid."),
+              help = "[Analysis] Minimum variant count per tier; smaller tiers are merged (default: 10)."),
   make_option("--gene_col",
               type = "integer", default = 7L,
               help = "[Analysis] Column index of gene name in matrix (default: 7)."),
@@ -188,28 +185,27 @@ if (!is.null(args$score_cols) && nzchar(args$score_cols)) {
 }
 
 message(sprintf(
-  "[vacant] test=%s | transform=%s | maf=%.4f | size_threshold=%d | n_cores=%d | no_rds=%s | tmpdir=%s",
-  args$test, args$transform, args$maf, args$size_threshold, args$n_cores,
+  "[vacant] test=%s | maf=%.4f | size_threshold=%d | n_cores=%d | no_rds=%s | tmpdir=%s",
+  args$test, args$maf, args$size_threshold, args$n_cores,
   args$no_rds,
   if (!is.null(args$tmpdir)) args$tmpdir else tempdir()
 ))
 
 result.dt <- tryCatch(
   VACANT::vacant(
-    matrix.file      = args$matrix,
-    ped.file         = args$ped,
-    score.file       = args$score,
-    cov.file         = args$covariates,
-    score.cols       = score.cols.vec,
-    maf.threshold    = args$maf,
-    size.threshold   = args$size_threshold,
-    transform.method = args$transform,
-    test             = args$test,
-    acat.weight      = args$weight,
-    gene.col         = args$gene_col,
-    meta.ncols       = args$meta_ncols,
-    n.cores          = args$n_cores,
-    tmpdir           = if (!is.null(args$tmpdir)) args$tmpdir else tempdir()
+    matrix.file    = args$matrix,
+    ped.file       = args$ped,
+    score.file     = args$score,
+    cov.file       = args$covariates,
+    score.cols     = score.cols.vec,
+    maf.threshold  = args$maf,
+    size.threshold = args$size_threshold,
+    test           = args$test,
+    acat.weight    = args$weight,
+    gene.col       = args$gene_col,
+    meta.ncols     = args$meta_ncols,
+    n.cores        = args$n_cores,
+    tmpdir         = if (!is.null(args$tmpdir)) args$tmpdir else tempdir()
   ),
   error = function(e) {
     stop(sprintf("[vacant] Error in vacant(): %s", e$message), call. = FALSE)
@@ -222,8 +218,9 @@ if (is.null(result.dt) || nrow(result.dt) == 0L) {
   quit(save = "no", status = 0)
 }
 
-# CSV (drop hidden .model column)
-csv.dt <- result.dt[, !colnames(result.dt) %in% ".model", with = FALSE]
+# CSV (drop hidden list columns)
+hidden.cols <- c(".model", ".cluster")
+csv.dt <- result.dt[, !colnames(result.dt) %in% hidden.cols, with = FALSE]
 data.table::fwrite(csv.dt, file = args$output)
 message(sprintf("[vacant] Results saved: %s", args$output))
 
@@ -237,9 +234,10 @@ if (!isTRUE(args$no_rds) && ".model" %in% colnames(result.dt)) {
     }
     saveRDS(
       list(
-        results = as.list(csv.dt[i, ]),
-        model   = result.dt[[".model"]][[i]],
-        gene    = gene.name
+        results           = as.list(csv.dt[i, ]),
+        model             = result.dt[[".model"]][[i]],
+        group.assignments = result.dt[[".cluster"]][[i]],
+        gene              = gene.name
       ),
       file = rds.path
     )
