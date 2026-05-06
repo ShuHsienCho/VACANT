@@ -6,37 +6,41 @@
 \usage{
 cluster_score(
   score,
-  geno,
   size.threshold = 10,
-  transform.method = c("none", "raw_squared", "phred_to_chisq", "log", "sigmoid"),
-  cond.number.warn = 100
+  transform.method = c("none", "raw_squared", "phred_to_chisq", "log", "sigmoid")
 )
 }
 \arguments{
-\item{score}{Numeric matrix or vector. Rows are variants, columns are score types.}
+\item{score}{Numeric matrix or vector. Rows are variants, columns are score
+dimensions.}
 
-\item{geno}{Character vector. Genotype strings for allele count weighting.}
+\item{size.threshold}{Integer. Minimum number of variants per tier before
+merging is triggered (default 10).}
 
-\item{size.threshold}{Integer. Minimum cluster size threshold (default 10).}
-
-\item{transform.method}{Character. "none", "raw_squared", "phred_to_chisq", or "log".}
-
-\item{cond.number.warn}{Numeric. If the condition number of the feature
-covariance matrix exceeds this threshold, a warning is printed and
-near-collinear columns are reported. High condition numbers indicate
-near-singular covariance, which destabilizes GMM BIC selection and
-K-means initialization. Default: 100.}
+\item{transform.method}{Character. Pre-clustering score transformation:
+\code{"none"}, \code{"raw_squared"}, \code{"phred_to_chisq"},
+\code{"log"}, or \code{"sigmoid"}.}
 }
 \value{
-A list containing:
-\item{group.assignments}{Integer vector of cluster IDs.}
-\item{score.centers}{Matrix of cluster centers (Standardized & Sorted).}
-\item{ac.weights}{Numeric vector of scalar weights (Un-scaled sum) for ACAT.}
-\item{cluster.sizes}{Integer vector of cluster sizes.}
-\item{prediction.model}{List containing \code{anchors.list} for clinical prediction.}
-\item{cond.number}{Condition number of the standardized feature covariance.}
+A list with elements:
+\item{group.assignments}{Integer vector of tier IDs, one per variant.}
+\item{score.centers}{Matrix of tier centers on the standardized scale,
+sorted by ascending mean score.}
+\item{ac.weights}{Numeric vector of ACAT weights per tier.}
+\item{cluster.sizes}{Integer vector of tier sizes (variant counts).}
+\item{prediction.model}{List for clinical prediction via
+\code{predict_vacant_cluster()}.}
 }
 \description{
-Performs K-means clustering on standardized multi-dimensional scores and
-identifies the Pareto frontier (Staircase) for each risk cluster.
+Performs GMM-based clustering on standardized multi-dimensional annotation
+scores and identifies the Pareto frontier (Staircase) for each risk tier.
+}
+\details{
+The pipeline uses a Gaussian mixture model (GMM) with E covariance
+parameterization (equal variance; EEI for multivariate input) for both
+K selection via BIC and primary tier assignment via posterior classification.
+Empty components (fitted by mclust but assigned zero variants via MAP) are
+dropped before merging.  Small tiers below \code{size.threshold} variants
+are then merged to the nearest tier by pooled within-cluster Mahalanobis
+distance.
 }

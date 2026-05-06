@@ -32,7 +32,7 @@ or \code{"uni"} (sequential univariate + ACAT).}
 \item{acat.weight}{Character. ACAT weighting: \code{"score"} (default)
 or \code{"equal"}.}
 
-\item{size.threshold}{Integer. Minimum cluster size for K-means (default: 10).}
+\item{size.threshold}{Integer. Minimum variant count per tier (default: 10).}
 
 \item{transform.method}{Character. Score transformation applied before
 clustering: \code{"none"} (default), \code{"raw_squared"},
