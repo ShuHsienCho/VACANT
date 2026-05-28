@@ -94,7 +94,7 @@ vacant_core <- function(geno,
   # ---- 4. Tier Summary ----
   K <- max(clus$group.assignments)
   score.mat <- if (is.vector(score)) matrix(score, ncol = 1) else as.matrix(score)
-  phenotype.int <- as.integer(phenotype)
+  phenotype.int <- if (is.data.frame(phenotype)) as.integer(phenotype[[1]]) else as.integer(phenotype)
   n.samples <- nchar(geno[1])
   case.idx  <- which(phenotype.int == 1L)
   ctrl.idx  <- which(phenotype.int == 0L)
