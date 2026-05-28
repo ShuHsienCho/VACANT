@@ -25,6 +25,8 @@
 #'     \item{\code{score.centers}}{Matrix of tier centers (standardized scale).}
 #'     \item{\code{model}}{Pareto staircase prediction model (for use with
 #'       \code{predict_vacant_cluster()}).}
+#'     \item{\code{tier.summary}}{Data frame with per-tier score ranges,
+#'       carrier counts, MAF, and effect estimates.}
 #'     \item{\code{info}}{List of metadata (test type, weights, n variants).}
 #'   }
 #'   Returns NULL if no carriers are found or the model fails.
@@ -89,12 +91,54 @@ vacant_core <- function(geno,
                            test        = test,
                            acat.weight = acat.weight)
 
+  # ---- 4. Tier Summary ----
+  K <- max(clus$group.assignments)
+  score.mat <- if (is.vector(score)) matrix(score, ncol = 1) else as.matrix(score)
+  phenotype.int <- as.integer(phenotype)
+  n.samples <- nchar(geno[1])
+  case.idx  <- which(phenotype.int == 1L)
+  ctrl.idx  <- which(phenotype.int == 0L)
+
+  tier.summary.rows <- vector("list", K)
+  for (k in seq_len(K)) {
+    idx <- which(clus$group.assignments == k)
+    s   <- score.mat[idx, 1]
+
+    tier.geno <- geno[idx]
+    sample.any <- rep(0L, n.samples)
+    for (g in tier.geno) {
+      ac.vec <- utf8ToInt(g) - utf8ToInt("0")
+      sample.any <- pmax(sample.any, as.integer(ac.vec > 0L))
+    }
+
+    ac.per.var <- vapply(tier.geno, function(g) sum(utf8ToInt(g) - utf8ToInt("0")), integer(1))
+    maf.per.var <- ac.per.var / (2L * n.samples)
+
+    tier.summary.rows[[k]] <- data.frame(
+      tier              = k,
+      n.variants        = length(idx),
+      score.min         = min(s),
+      score.max         = max(s),
+      score.mean        = round(mean(s), 2),
+      maf.mean          = signif(mean(maf.per.var), 3),
+      maf.median        = signif(median(maf.per.var), 3),
+      n.carriers.total  = sum(sample.any),
+      n.carriers.case   = sum(sample.any[case.idx]),
+      n.carriers.ctrl   = sum(sample.any[ctrl.idx]),
+      carrier.freq.case = round(sum(sample.any[case.idx]) / max(length(case.idx), 1L), 4),
+      carrier.freq.ctrl = round(sum(sample.any[ctrl.idx]) / max(length(ctrl.idx), 1L), 4),
+      stringsAsFactors  = FALSE
+    )
+  }
+  tier.summary.df <- do.call(rbind, tier.summary.rows)
+
   list(
     results           = stats.out,
     group.assignments = clus$group.assignments,
     cluster.sizes     = clus$cluster.sizes,
     score.centers     = clus$score.centers,
     model             = clus$prediction.model,
+    tier.summary      = tier.summary.df,
     info              = list(
       test   = test,
       weight = acat.weight,

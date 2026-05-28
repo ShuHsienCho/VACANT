@@ -227,6 +227,7 @@ vacant <- function(matrix.file,
       res.df$n_samples  <- nrow(prepared$phenotype)
       res.df$.model     <- list(vacant.obj$model)
       res.df$.cluster   <- list(vacant.obj$group.assignments)
+      res.df$.tier.summary <- list(vacant.obj$tier.summary)
       res.df
 
     }, error = function(e) {

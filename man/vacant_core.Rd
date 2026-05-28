@@ -42,6 +42,8 @@ A named list with elements:
 \item{\code{score.centers}}{Matrix of tier centers (standardized scale).}
 \item{\code{model}}{Pareto staircase prediction model (for use with
 \code{predict_vacant_cluster()}).}
+\item{\code{tier.summary}}{Data frame with per-tier score ranges,
+carrier counts, MAF, and effect estimates.}
 \item{\code{info}}{List of metadata (test type, weights, n variants).}
 }
 Returns NULL if no carriers are found or the model fails.
